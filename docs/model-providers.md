@@ -84,9 +84,10 @@ semantics.
 If a future provider uses WebSocket, gRPC or a vendor SDK, implement
 `StreamingChatModel` directly. No Agent or Tool API changes are needed.
 
-## Current Agent boundary
+## Agent integration
 
-The fixed Agent Loop currently calls `ChatModel.generate` and updates State
-only after a complete model turn. Streaming is available directly at the Model
-layer. A later Agent event API can consume `StreamingChatModel` while preserving
-the same State and Tool execution semantics.
+Normal `Agent.run` and `runAsync` call `ChatModel.generate`. The
+`Agent.runStreamingAsync` path uses `StreamingChatModel.generateStream` when
+available, forwards normalized deltas as `MODEL_STREAM_EVENT`, then updates
+State from the assembled final `ModelResponse`. Tool routing and State semantics
+are therefore identical in streaming and non-streaming executions.

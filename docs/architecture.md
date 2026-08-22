@@ -28,6 +28,8 @@ AgentRunner -- creates --> AgentState
 - `Agent` is an immutable definition and the user-facing execution facade.
 - `AgentRunner` owns execution resources and creates a new loop for every run.
 - `AgentLoop` is a fixed state machine with model and tool phases.
+- `AgentPlugin` groups ordered lifecycle observers and model/tool
+  interceptors. Plugins are frozen when the Agent is built.
 - `AgentState` is mutable but owned by one invocation. Callers receive an
   immutable `AgentStateSnapshot`.
 - `ChatModel` is the provider-neutral complete-response contract.
@@ -67,11 +69,12 @@ There is no public node API, edge DSL, graph compiler or checkpoint protocol.
 Internal model/tool phases can evolve without committing the public API to a
 workflow abstraction.
 
-## Step and termination semantics
+## Turn, step and termination semantics
 
-One step is one model invocation and its following tool batch. `maxSteps`
-therefore limits model invocations. Tool calls are recorded separately and do
-not each consume a step.
+A Turn is one Agent task: one `run`, `runAsync` or `runStreamingAsync`
+invocation with its own State. One Step is one model invocation and its
+following tool batch. `maxSteps` therefore limits model invocations. Tool calls
+are recorded separately and do not each consume a step.
 
 Execution status follows this state machine:
 
@@ -121,6 +124,40 @@ on `AbstractHttpChatModel`; it does not modify `agent-core`.
 The normalized stream reports response start, text deltas, tool-call start,
 tool-argument deltas and usage. Its completion future returns the same
 `ModelResponse` shape as a non-streaming call.
+
+## Agent execution events and plugins
+
+`Agent.runStreamingAsync` selects `StreamingChatModel.generateStream` when the
+configured model supports it and otherwise falls back to `ChatModel.generate`.
+Both paths emit the same Agent lifecycle events:
+
+```text
+TURN_STARTED
+  STEP_STARTED
+    MODEL_STARTED
+    MODEL_STREAM_EVENT *
+    MODEL_COMPLETED
+    TOOL_STARTED *
+    TOOL_COMPLETED *
+  STEP_COMPLETED
+TURN_COMPLETED | TURN_STOPPED | TURN_FAILED | TURN_CANCELLED
+```
+
+Every event carries a per-Turn sequence number, Turn ID, Agent name and current
+Step. Terminal events also carry an immutable State snapshot. `getRunId()` is
+retained as an alias for `getTurnId()`.
+
+Lifecycle events are facts for tracing, metrics and audit. Listener failures
+are isolated so an observer cannot change execution semantics. Operations that
+must wrap, rewrite, reject or short-circuit a model/tool call use ordered
+`ModelInterceptor` and `ToolInterceptor` chains supplied by `AgentPlugin`.
+Interceptors receive immutable invocation data and State snapshots rather than
+the live mutable AgentState.
+
+Cancelling the returned Agent future propagates to the active model stream or
+model future, through interceptor futures, and then to the active sequential or
+parallel tool batch. See [Lifecycle events and plugins](plugins.md) for the
+extension contract and ordering rules.
 
 ## Agent as Tool
 

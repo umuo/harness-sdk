@@ -5,7 +5,8 @@ agent loop.
 
 ## Modules
 
-- `agent-core`: provider-neutral agent, state, tool, skill and todo runtime.
+- `agent-core`: provider-neutral agent, state, tool, plugin, skill and todo
+  runtime.
 - `agent-model-http`: Java 8 HTTP/SSE transport and provider extension base.
 - `agent-model-openai`: OpenAI-compatible Chat Completions and OpenAI
   Responses API adapters.
@@ -13,8 +14,8 @@ agent loop.
 - `agent-examples`: executable examples.
 
 All included model providers support both complete responses and streaming
-responses. The core Agent Loop currently consumes complete model responses;
-streaming is exposed at the provider-neutral Model API.
+responses. Agents expose model deltas and execution lifecycle events through
+`runStreamingAsync` without changing the fixed state-driven loop.
 
 ## Build
 
@@ -27,6 +28,8 @@ mvn clean verify
 - [Architecture](docs/architecture.md)
 - [API guide](docs/api-guide.md)
 - [Model providers and streaming](docs/model-providers.md)
+- [Lifecycle events and plugins](docs/plugins.md)
+- [Multi-Agent composition](docs/multi-agent.md)
 - [OpenAI-compatible provider](docs/openai-provider.md)
 - [MVP scope and roadmap](docs/mvp.md)
 

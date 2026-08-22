@@ -52,7 +52,7 @@ AgentResult result = agent.run(AgentRequest.of("Echo hello"));
 System.out.println(result.getOutput());
 ```
 
-Every run creates a new AgentState. Conversation history can be supplied via
+Every Turn creates a new AgentState. Conversation history can be supplied via
 `AgentRequest.Builder.initialMessages(...)`; the SDK does not persist history.
 
 ## Delegate to another Agent
@@ -130,3 +130,85 @@ CompletableFuture<ModelResponse> completed = stream.completion();
 Calling `stream.cancel()` cancels its completion future and disconnects the
 underlying HTTP stream. See [Model providers and streaming](model-providers.md)
 for provider configuration and extension points.
+
+## Stream an Agent execution
+
+Use `runStreamingAsync` to observe both model deltas and the fixed Agent Loop:
+
+```java
+CompletableFuture<AgentResult> execution = agent.runStreamingAsync(
+    AgentRequest.of("Research Java 8 concurrency"),
+    event -> {
+        if (event.getType() == AgentEventType.MODEL_STREAM_EVENT
+                && event.getModelStreamEvent().getType()
+                    == ModelStreamEventType.TEXT_DELTA) {
+            System.out.print(event.getModelStreamEvent().getDelta());
+        }
+        if (event.getType() == AgentEventType.TOOL_COMPLETED) {
+            System.out.println(event.getToolExecution().getResult().getContent());
+        }
+    }
+);
+```
+
+The event sequence also includes Turn/Step start, complete model responses,
+tool start/completion, Step completion and one terminal Turn event. Calling
+`execution.cancel(true)` cancels the active model or tool operation.
+
+## Extend lifecycle behavior with a Plugin
+
+Use an `AgentPlugin` to bundle read-only event observers and ordered model/tool
+interceptors:
+
+```java
+AgentPlugin audit = new AgentPlugin() {
+    @Override
+    public String name() {
+        return "audit";
+    }
+
+    @Override
+    public void onEvent(AgentEvent event) {
+        auditLog(event.getTurnId(), event.getStep(), event.getType());
+    }
+
+    @Override
+    public List<ToolInterceptor> toolInterceptors() {
+        return Collections.singletonList((invocation, chain) -> {
+            long started = System.nanoTime();
+            return chain.proceed(invocation).thenApply(result ->
+                result.withMetadata(
+                    "elapsedNanos", System.nanoTime() - started
+                )
+            );
+        });
+    }
+};
+
+Agent agent = Agent.builder()
+    .name("assistant")
+    .model(chatModel)
+    .plugin(audit)
+    .build();
+```
+
+Observers cannot control execution and their exceptions are isolated.
+Interceptors can call `chain.proceed(...)` to wrap or rewrite an invocation, or
+return their own future to short-circuit it. See [Lifecycle events and
+plugins](plugins.md).
+
+## Run independent Agents in parallel
+
+Parallel collaboration is a small `CompletableFuture` composition:
+
+```java
+CompletableFuture<List<AgentResult>> reports =
+    AgentExecutions.runParallel(Arrays.asList(
+        AgentInvocation.of(researchAgent, "Research the topic"),
+        AgentInvocation.of(reviewAgent, "Review the proposal")
+    ));
+```
+
+All invocations have independent State. Results retain invocation order; one
+failure cancels unfinished siblings. This helper does not add nodes, edges or a
+workflow runtime.

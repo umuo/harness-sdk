@@ -16,13 +16,20 @@
 - Streaming and non-streaming OpenAI-compatible Chat Completions provider.
 - Streaming and non-streaming OpenAI Responses API provider.
 - Streaming and non-streaming Anthropic Messages API provider.
+- Agent lifecycle and model-delta events through `runStreamingAsync`.
+- Build-time Plugins with lifecycle observers and ordered model/tool
+  interceptors.
+- Cancellation propagation from Agent execution to model and tool operations.
+- Lightweight ordered parallel-Agent composition.
 - Runnable examples and scripted-model unit tests.
 
 ## Deliberately excluded
 
 - Graph, edge or workflow DSLs.
 - Checkpointing and state persistence.
-- Agent-level streaming events (the Model layer already supports streaming).
+- A persistent event bus or replayable event store.
+- Dynamic plugin loading, hot unload, dependency injection or service
+  container semantics.
 - RAG and vector stores.
 - MCP.
 - Human-in-the-loop runtime.
@@ -32,11 +39,10 @@
 
 ## Likely follow-ups
 
-1. Agent-level streaming events without changing the core state machine.
-2. More Provider modules.
-3. Agent listeners and tracing integrations.
-4. Explicit Handoff control signals plus an AgentRegistry.
-5. Optional persistence implemented outside AgentState.
+1. More Provider modules.
+2. Tracing integrations built as Agent Plugins.
+3. Explicit Handoff control signals plus an AgentRegistry.
+4. Optional persistence implemented outside AgentState.
 
 Supervisor, router, parallel-agent and review/debate patterns should remain
 compositions of Agent, AgentTool and CompletableFuture. Handoff and swarm need

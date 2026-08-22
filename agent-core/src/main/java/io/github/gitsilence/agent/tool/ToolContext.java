@@ -35,6 +35,10 @@ public final class ToolContext {
         return state.getRunId();
     }
 
+    public String getTurnId() {
+        return state.getRunId();
+    }
+
     public Executor getExecutor() {
         return runner.getExecutor();
     }

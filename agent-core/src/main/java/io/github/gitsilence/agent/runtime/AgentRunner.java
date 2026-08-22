@@ -63,7 +63,20 @@ public final class AgentRunner implements AutoCloseable {
         InvocationPath path = InvocationPath.root(
             agent.getInstanceId(), agent.descriptor().getName()
         );
-        return runInternal(agent, request, path);
+        return runInternal(agent, request, path, AgentEventListener.noop(), false);
+    }
+
+    public CompletableFuture<AgentResult> runStreamingAsync(
+            Agent agent,
+            AgentRequest request,
+            AgentEventListener listener) {
+        Objects.requireNonNull(agent, "agent");
+        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(listener, "listener");
+        InvocationPath path = InvocationPath.root(
+            agent.getInstanceId(), agent.descriptor().getName()
+        );
+        return runInternal(agent, request, path, listener, true);
     }
 
     public CompletableFuture<AgentResult> runChildAsync(Agent agent,
@@ -86,13 +99,17 @@ public final class AgentRunner implements AutoCloseable {
         return runInternal(
             agent,
             request,
-            parentPath.append(agent.getInstanceId(), agent.descriptor().getName())
+            parentPath.append(agent.getInstanceId(), agent.descriptor().getName()),
+            AgentEventListener.noop(),
+            false
         );
     }
 
     private CompletableFuture<AgentResult> runInternal(Agent agent,
                                                        AgentRequest request,
-                                                       InvocationPath path) {
+                                                       InvocationPath path,
+                                                       AgentEventListener listener,
+                                                       boolean streamModel) {
         String runId = UUID.randomUUID().toString();
         List<ChatMessage> messages = new ArrayList<ChatMessage>();
         if (!agent.getInstructions().trim().isEmpty()) {
@@ -104,6 +121,7 @@ public final class AgentRunner implements AutoCloseable {
         Map<String, Object> metadata =
             new LinkedHashMap<String, Object>(request.getMetadata());
         metadata.put("runId", runId);
+        metadata.put("turnId", runId);
         metadata.put("agentName", agent.descriptor().getName());
         metadata.put("invocationPath", path.getAgentNames());
 
@@ -114,7 +132,9 @@ public final class AgentRunner implements AutoCloseable {
             metadata,
             request.getVariables()
         );
-        return new AgentLoop(agent, state, this, path).run();
+        return new AgentLoop(
+            agent, state, this, path, listener, streamModel
+        ).run();
     }
 
     public ExecutorService getExecutor() {

@@ -2,6 +2,9 @@ package io.github.gitsilence.agent.agent;
 
 import io.github.gitsilence.agent.model.ChatModel;
 import io.github.gitsilence.agent.model.ModelOptions;
+import io.github.gitsilence.agent.plugin.AgentPlugin;
+import io.github.gitsilence.agent.plugin.ModelInterceptor;
+import io.github.gitsilence.agent.plugin.ToolInterceptor;
 import io.github.gitsilence.agent.runtime.AgentRunner;
 import io.github.gitsilence.agent.runtime.TerminationCondition;
 import io.github.gitsilence.agent.skill.Skill;
@@ -25,6 +28,7 @@ public final class AgentBuilder {
     private ModelOptions modelOptions = ModelOptions.empty();
     private final List<Tool> tools = new ArrayList<Tool>();
     private final List<Skill> skills = new ArrayList<Skill>();
+    private final List<AgentPlugin> plugins = new ArrayList<AgentPlugin>();
     private final List<TerminationCondition> terminationConditions =
         new ArrayList<TerminationCondition>();
     private int maxSteps = 10;
@@ -74,6 +78,11 @@ public final class AgentBuilder {
 
     public AgentBuilder skill(Skill skill) {
         skills.add(Objects.requireNonNull(skill, "skill"));
+        return this;
+    }
+
+    public AgentBuilder plugin(AgentPlugin plugin) {
+        plugins.add(Objects.requireNonNull(plugin, "plugin"));
         return this;
     }
 
@@ -134,6 +143,24 @@ public final class AgentBuilder {
             registry.registerAll(skill.getTools());
         }
 
+        List<ModelInterceptor> modelInterceptors =
+            new ArrayList<ModelInterceptor>();
+        List<ToolInterceptor> toolInterceptors =
+            new ArrayList<ToolInterceptor>();
+        for (AgentPlugin plugin : plugins) {
+            requirePluginName(plugin);
+            addAllNonNull(
+                modelInterceptors,
+                plugin.modelInterceptors(),
+                plugin.name() + ".modelInterceptors"
+            );
+            addAllNonNull(
+                toolInterceptors,
+                plugin.toolInterceptors(),
+                plugin.name() + ".toolInterceptors"
+            );
+        }
+
         return new Agent(
             descriptor,
             composedInstructions.toString(),
@@ -145,7 +172,26 @@ public final class AgentBuilder {
             toolErrorPolicy,
             toolTimeout,
             terminationConditions,
+            plugins,
+            modelInterceptors,
+            toolInterceptors,
             runner
         );
+    }
+
+    private static void requirePluginName(AgentPlugin plugin) {
+        String name = plugin.name();
+        if (name == null || name.trim().isEmpty()) {
+            throw new IllegalArgumentException("plugin name must not be blank");
+        }
+    }
+
+    private static <T> void addAllNonNull(List<T> target,
+                                          List<T> values,
+                                          String source) {
+        Objects.requireNonNull(values, source);
+        for (T value : values) {
+            target.add(Objects.requireNonNull(value, source + " entry"));
+        }
     }
 }

@@ -1,6 +1,8 @@
 package io.github.gitsilence.agent.tool;
 
 import io.github.gitsilence.agent.model.ToolCall;
+import io.github.gitsilence.agent.plugin.ToolInterceptor;
+import io.github.gitsilence.agent.plugin.ToolInvocation;
 import io.github.gitsilence.agent.runtime.Futures;
 
 import java.time.Duration;
@@ -9,11 +11,13 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 public final class ToolExecutor {
@@ -22,57 +26,140 @@ public final class ToolExecutor {
     private final ToolExecutionMode mode;
     private final ToolErrorPolicy errorPolicy;
     private final Duration timeout;
+    private final List<ToolInterceptor> interceptors;
 
     public ToolExecutor(ToolRegistry registry,
                         ToolExecutionMode mode,
                         ToolErrorPolicy errorPolicy,
                         Duration timeout) {
+        this(registry, mode, errorPolicy, timeout,
+            Collections.<ToolInterceptor>emptyList());
+    }
+
+    public ToolExecutor(ToolRegistry registry,
+                        ToolExecutionMode mode,
+                        ToolErrorPolicy errorPolicy,
+                        Duration timeout,
+                        List<ToolInterceptor> interceptors) {
         this.registry = registry;
         this.mode = mode;
         this.errorPolicy = errorPolicy;
         this.timeout = timeout;
+        this.interceptors = Collections.unmodifiableList(
+            new ArrayList<ToolInterceptor>(
+                Objects.requireNonNull(interceptors, "interceptors")
+            )
+        );
     }
 
     public CompletableFuture<List<ToolExecutionRecord>> executeAll(
             List<ToolCall> calls,
             Function<ToolCall, ToolContext> contextFactory) {
+        return executeAll(calls, contextFactory, call -> null);
+    }
+
+    public CompletableFuture<List<ToolExecutionRecord>> executeAll(
+            List<ToolCall> calls,
+            Function<ToolCall, ToolContext> contextFactory,
+            Function<ToolCall, ToolInvocation> invocationFactory) {
         if (calls.isEmpty()) {
             return CompletableFuture.completedFuture(
                 Collections.<ToolExecutionRecord>emptyList()
             );
         }
         if (mode == ToolExecutionMode.PARALLEL) {
-            return executeParallel(calls, contextFactory);
+            return executeParallel(calls, contextFactory, invocationFactory);
         }
-        return executeSequential(calls, contextFactory);
+        return executeSequential(calls, contextFactory, invocationFactory);
     }
 
     private CompletableFuture<List<ToolExecutionRecord>> executeSequential(
             List<ToolCall> calls,
-            Function<ToolCall, ToolContext> contextFactory) {
-        CompletableFuture<List<ToolExecutionRecord>> chain =
-            CompletableFuture.completedFuture(new ArrayList<ToolExecutionRecord>());
+            Function<ToolCall, ToolContext> contextFactory,
+            Function<ToolCall, ToolInvocation> invocationFactory) {
+        final CompletableFuture<List<ToolExecutionRecord>> result =
+            new CompletableFuture<List<ToolExecutionRecord>>();
+        final AtomicReference<CompletableFuture<ToolExecutionRecord>> active =
+            new AtomicReference<CompletableFuture<ToolExecutionRecord>>();
+        executeSequentialAt(
+            calls,
+            contextFactory,
+            invocationFactory,
+            0,
+            new ArrayList<ToolExecutionRecord>(),
+            active,
+            result
+        );
+        result.whenComplete((records, error) -> {
+            if (result.isCancelled()) {
+                CompletableFuture<ToolExecutionRecord> current = active.getAndSet(null);
+                if (current != null) {
+                    current.cancel(true);
+                }
+            }
+        });
+        return result;
+    }
 
-        for (final ToolCall call : calls) {
-            chain = chain.thenCompose(records ->
-                executeOne(call, contextFactory.apply(call)).thenApply(record -> {
-                    records.add(record);
-                    return records;
-                })
-            );
+    private void executeSequentialAt(
+            List<ToolCall> calls,
+            Function<ToolCall, ToolContext> contextFactory,
+            Function<ToolCall, ToolInvocation> invocationFactory,
+            int index,
+            List<ToolExecutionRecord> records,
+            AtomicReference<CompletableFuture<ToolExecutionRecord>> active,
+            CompletableFuture<List<ToolExecutionRecord>> result) {
+        if (result.isDone()) {
+            return;
         }
-        return chain.thenApply(records -> Collections.unmodifiableList(
-            new ArrayList<ToolExecutionRecord>(records)
-        ));
+        if (index >= calls.size()) {
+            result.complete(Collections.unmodifiableList(
+                new ArrayList<ToolExecutionRecord>(records)
+            ));
+            return;
+        }
+
+        ToolCall call = calls.get(index);
+        CompletableFuture<ToolExecutionRecord> current =
+            executeOne(
+                call,
+                contextFactory.apply(call),
+                invocationFactory.apply(call)
+            );
+        active.set(current);
+        if (result.isCancelled()) {
+            current.cancel(true);
+            return;
+        }
+        current.whenComplete((record, error) -> {
+            active.compareAndSet(current, null);
+            if (result.isDone()) {
+                return;
+            }
+            if (error != null) {
+                result.completeExceptionally(Futures.unwrap(error));
+                return;
+            }
+            records.add(record);
+            executeSequentialAt(
+                calls, contextFactory, invocationFactory,
+                index + 1, records, active, result
+            );
+        });
     }
 
     private CompletableFuture<List<ToolExecutionRecord>> executeParallel(
             List<ToolCall> calls,
-            Function<ToolCall, ToolContext> contextFactory) {
+            Function<ToolCall, ToolContext> contextFactory,
+            Function<ToolCall, ToolInvocation> invocationFactory) {
         List<CompletableFuture<ToolExecutionRecord>> futures =
             new ArrayList<CompletableFuture<ToolExecutionRecord>>();
         for (ToolCall call : calls) {
-            futures.add(executeOne(call, contextFactory.apply(call)));
+            futures.add(executeOne(
+                call,
+                contextFactory.apply(call),
+                invocationFactory.apply(call)
+            ));
         }
 
         final CompletableFuture<List<ToolExecutionRecord>> result =
@@ -100,63 +187,125 @@ public final class ToolExecutor {
                 }
             });
         }
+        result.whenComplete((records, error) -> {
+            if (result.isCancelled()) {
+                for (CompletableFuture<ToolExecutionRecord> future : futures) {
+                    future.cancel(true);
+                }
+            }
+        });
         return result;
     }
 
-    private CompletableFuture<ToolExecutionRecord> executeOne(ToolCall call,
-                                                               ToolContext context) {
+    private CompletableFuture<ToolExecutionRecord> executeOne(
+            ToolCall call,
+            ToolContext context,
+            ToolInvocation invocation) {
         Instant startedAt = Instant.now();
-        Optional<Tool> resolved = registry.find(call.getName());
-        if (!resolved.isPresent()) {
-            return failureOrException(
-                call,
-                startedAt,
-                new IllegalArgumentException("Unknown tool: " + call.getName())
-            );
+        if (!interceptors.isEmpty() && invocation == null) {
+            return failureOrException(call, startedAt, new IllegalStateException(
+                "ToolInvocation is required when interceptors are configured"
+            ));
         }
-
-        final ToolArguments arguments;
-        try {
-            arguments = ToolArguments.parse(call.getArguments());
-        } catch (Throwable error) {
-            return failureOrException(call, startedAt, error);
-        }
-
-        final CompletableFuture<ToolResult> execution;
-        try {
-            execution = resolved.get().execute(arguments, context);
-            if (execution == null) {
-                return failureOrException(
-                    call,
-                    startedAt,
-                    new IllegalStateException("Tool returned null future")
-                );
-            }
-        } catch (Throwable error) {
-            return failureOrException(call, startedAt, error);
-        }
-
+        CancellationGroup cancellations = new CancellationGroup();
+        AtomicReference<ToolCall> executedCall =
+            new AtomicReference<ToolCall>(call);
+        final CompletableFuture<ToolResult> execution = proceedTool(
+            invocation, call, context, 0, cancellations, executedCall
+        );
+        cancellations.add(() -> execution.cancel(true));
         CompletableFuture<ToolResult> timed = withTimeout(execution, call, context);
         CompletableFuture<ToolExecutionRecord> result =
             new CompletableFuture<ToolExecutionRecord>();
         timed.whenComplete((toolResult, error) -> {
             if (error == null && toolResult != null) {
                 result.complete(new ToolExecutionRecord(
-                    call, toolResult, startedAt, Instant.now()
+                    call, executedCall.get(), toolResult, startedAt, Instant.now()
                 ));
                 return;
             }
             Throwable actual = error == null
                 ? new IllegalStateException("Tool returned null result")
                 : Futures.unwrap(error);
-            completeFailure(result, call, startedAt, actual);
+            cancellations.cancel();
+            completeFailure(result, call, executedCall.get(), startedAt, actual);
         });
         result.whenComplete((record, error) -> {
             if (result.isCancelled()) {
+                cancellations.cancel();
                 timed.cancel(true);
             }
         });
         return result;
+    }
+
+    private CompletableFuture<ToolResult> proceedTool(
+            ToolInvocation invocation,
+            ToolCall originalCall,
+            ToolContext context,
+            int index,
+            CancellationGroup cancellations,
+            AtomicReference<ToolCall> executedCall) {
+        if (!interceptors.isEmpty()) {
+            Objects.requireNonNull(invocation, "invocation");
+        }
+        if (index >= interceptors.size()) {
+            ToolCall effective = invocation == null
+                ? originalCall : invocation.getCall();
+            executedCall.set(effective);
+            return executeTerminal(effective, context, cancellations);
+        }
+        ToolInterceptor interceptor = interceptors.get(index);
+        try {
+            CompletableFuture<ToolResult> result = interceptor.intercept(
+                invocation,
+                next -> proceedTool(
+                    next, originalCall, context, index + 1,
+                    cancellations, executedCall
+                )
+            );
+            if (result == null) {
+                return Futures.failed(new IllegalStateException(
+                    "ToolInterceptor returned null future: "
+                        + interceptor.getClass().getName()
+                ));
+            }
+            cancellations.add(() -> result.cancel(true));
+            return result;
+        } catch (Throwable error) {
+            return Futures.failed(error);
+        }
+    }
+
+    private CompletableFuture<ToolResult> executeTerminal(
+            ToolCall call,
+            ToolContext context,
+            CancellationGroup cancellations) {
+        Optional<Tool> resolved = registry.find(call.getName());
+        if (!resolved.isPresent()) {
+            return Futures.failed(new IllegalArgumentException(
+                "Unknown tool: " + call.getName()
+            ));
+        }
+        final ToolArguments arguments;
+        try {
+            arguments = ToolArguments.parse(call.getArguments());
+        } catch (Throwable error) {
+            return Futures.failed(error);
+        }
+        try {
+            CompletableFuture<ToolResult> execution =
+                resolved.get().execute(arguments, context);
+            if (execution == null) {
+                return Futures.failed(new IllegalStateException(
+                    "Tool returned null future"
+                ));
+            }
+            cancellations.add(() -> execution.cancel(true));
+            return execution;
+        } catch (Throwable error) {
+            return Futures.failed(error);
+        }
     }
 
     private CompletableFuture<ToolExecutionRecord> failureOrException(
@@ -173,6 +322,14 @@ public final class ToolExecutor {
                                  ToolCall call,
                                  Instant startedAt,
                                  Throwable error) {
+        completeFailure(target, call, call, startedAt, error);
+    }
+
+    private void completeFailure(CompletableFuture<ToolExecutionRecord> target,
+                                 ToolCall call,
+                                 ToolCall executedCall,
+                                 Instant startedAt,
+                                 Throwable error) {
         if (errorPolicy == ToolErrorPolicy.FAIL_FAST) {
             target.completeExceptionally(error);
             return;
@@ -183,6 +340,7 @@ public final class ToolExecutor {
         }
         target.complete(new ToolExecutionRecord(
             call,
+            executedCall,
             ToolResult.failure("Tool error: " + message),
             startedAt,
             Instant.now()
@@ -221,5 +379,46 @@ public final class ToolExecutor {
             }
         });
         return target;
+    }
+
+    private static final class CancellationGroup {
+        private final List<Runnable> actions = new ArrayList<Runnable>();
+        private boolean cancelled;
+
+        private void add(Runnable action) {
+            boolean runNow;
+            synchronized (this) {
+                runNow = cancelled;
+                if (!runNow) {
+                    actions.add(action);
+                }
+            }
+            if (runNow) {
+                cancelQuietly(action);
+            }
+        }
+
+        private void cancel() {
+            List<Runnable> pending;
+            synchronized (this) {
+                if (cancelled) {
+                    return;
+                }
+                cancelled = true;
+                pending = new ArrayList<Runnable>(actions);
+                actions.clear();
+            }
+            for (Runnable action : pending) {
+                cancelQuietly(action);
+            }
+        }
+
+        private static void cancelQuietly(Runnable action) {
+            try {
+                action.run();
+            } catch (Throwable ignored) {
+                // Cancellation remains best effort for plugin futures.
+            }
+        }
     }
 }

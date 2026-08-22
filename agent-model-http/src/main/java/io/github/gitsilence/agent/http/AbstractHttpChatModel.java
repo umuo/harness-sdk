@@ -43,26 +43,54 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
     @Override
     public CompletableFuture<ModelResponse> generate(ModelRequest request) {
         final HttpRequestData httpRequest;
+        final CompletableFuture<HttpResponseData> httpResponse;
         try {
             httpRequest = request(request, false);
+            httpResponse = transport.post(httpRequest);
+            if (httpResponse == null) {
+                return Futures.failed(new IllegalStateException(
+                    "HTTP transport returned null future"
+                ));
+            }
         } catch (Throwable error) {
             return Futures.failed(error);
         }
-        return transport.post(httpRequest).thenApply(response -> {
-            if (!response.isSuccessful()) {
-                throw new ModelException(
-                    providerName() + " returned HTTP " + response.getStatus()
-                        + ": " + truncate(response.getBody(), 4000)
-                );
+
+        final CompletableFuture<ModelResponse> result =
+            new CompletableFuture<ModelResponse>();
+        httpResponse.whenComplete((response, error) -> {
+            if (result.isCancelled()) {
+                return;
+            }
+            if (error != null) {
+                result.completeExceptionally(Futures.unwrap(error));
+                return;
             }
             try {
-                return decodeResponse(mapper.readTree(response.getBody()));
+                if (response == null) {
+                    throw new ModelException("HTTP transport returned null response");
+                }
+                if (!response.isSuccessful()) {
+                    throw new ModelException(
+                        providerName() + " returned HTTP " + response.getStatus()
+                            + ": " + truncate(response.getBody(), 4000)
+                    );
+                }
+                result.complete(decodeResponse(mapper.readTree(response.getBody())));
             } catch (ModelException e) {
-                throw e;
+                result.completeExceptionally(e);
             } catch (Exception e) {
-                throw new ModelException(providerName() + " response decoding failed", e);
+                result.completeExceptionally(new ModelException(
+                    providerName() + " response decoding failed", e
+                ));
             }
         });
+        result.whenComplete((response, error) -> {
+            if (result.isCancelled()) {
+                httpResponse.cancel(true);
+            }
+        });
+        return result;
     }
 
     @Override

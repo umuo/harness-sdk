@@ -62,6 +62,7 @@ public final class AgentStateSnapshot {
     }
 
     public String getRunId() { return runId; }
+    public String getTurnId() { return runId; }
     public String getAgentName() { return agentName; }
     public List<ChatMessage> getMessages() { return messages; }
     public List<ToolExecutionRecord> getToolResults() { return toolResults; }

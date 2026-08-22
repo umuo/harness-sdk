@@ -8,6 +8,12 @@ import io.github.gitsilence.agent.model.MessageRole;
 import io.github.gitsilence.agent.model.ModelRequest;
 import io.github.gitsilence.agent.model.ModelResponse;
 import io.github.gitsilence.agent.model.ToolCall;
+import io.github.gitsilence.agent.model.stream.ModelStream;
+import io.github.gitsilence.agent.model.stream.ModelStreamEvent;
+import io.github.gitsilence.agent.model.stream.ModelStreamListener;
+import io.github.gitsilence.agent.model.stream.StreamingChatModel;
+import io.github.gitsilence.agent.runtime.AgentEvent;
+import io.github.gitsilence.agent.runtime.AgentEventType;
 import io.github.gitsilence.agent.runtime.AgentExecutionException;
 import io.github.gitsilence.agent.runtime.ExecutionStatus;
 import io.github.gitsilence.agent.runtime.StopSignal;
@@ -29,6 +35,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -295,6 +302,138 @@ class AgentLoopTest {
         assertEquals("recovered from timeout", result.getOutput());
         assertTrue(result.getState().getToolResults().get(0)
             .getResult().getContent().contains("timed out"));
+    }
+
+    @Test
+    void streamsNormalizedModelEventsThroughAgentLifecycle() {
+        StreamingChatModel model = new StreamingChatModel() {
+            @Override
+            public CompletableFuture<ModelResponse> generate(ModelRequest request) {
+                throw new AssertionError("Streaming execution must use generateStream");
+            }
+
+            @Override
+            public ModelStream generateStream(ModelRequest request,
+                                               ModelStreamListener listener) {
+                listener.onEvent(ModelStreamEvent.responseStarted(
+                    Collections.singletonMap("responseId", "stream-1")
+                ));
+                listener.onEvent(ModelStreamEvent.textDelta("hello"));
+                ModelResponse response = ModelResponse.of(
+                    ChatMessage.assistant("hello")
+                );
+                listener.onComplete(response);
+                return new ModelStream(
+                    CompletableFuture.completedFuture(response),
+                    () -> { }
+                );
+            }
+        };
+        Agent agent = agentBuilder("streaming", model).build();
+        List<AgentEvent> events = new ArrayList<AgentEvent>();
+
+        AgentResult result = agent.runStreamingAsync("hello", events::add).join();
+
+        assertEquals("hello", result.getOutput());
+        assertEquals(Arrays.asList(
+            AgentEventType.TURN_STARTED,
+            AgentEventType.STEP_STARTED,
+            AgentEventType.MODEL_STARTED,
+            AgentEventType.MODEL_STREAM_EVENT,
+            AgentEventType.MODEL_STREAM_EVENT,
+            AgentEventType.MODEL_COMPLETED,
+            AgentEventType.STEP_COMPLETED,
+            AgentEventType.TURN_COMPLETED
+        ), eventTypes(events));
+        assertEquals("hello", events.get(4).getModelStreamEvent().getDelta());
+        assertEquals(1L, events.get(0).getSequence());
+        assertEquals(8L, events.get(7).getSequence());
+    }
+
+    @Test
+    void emitsToolLifecycleEventsForNonStreamingFallbackModel() {
+        ToolCall call = new ToolCall("call-1", "echo", "{\"text\":\"hello\"}");
+        ScriptedChatModel model = new ScriptedChatModel(
+            ModelResponse.of(ChatMessage.assistant(null, Collections.singletonList(call))),
+            ModelResponse.of(ChatMessage.assistant("done"))
+        );
+        Tool echo = Tools.sync(
+            ToolDefinition.builder().name("echo").description("Echo").build(),
+            (arguments, context) -> ToolResult.success(arguments.requireString("text"))
+        );
+        Agent agent = agentBuilder("events", model).tool(echo).build();
+        List<AgentEvent> events = new ArrayList<AgentEvent>();
+
+        agent.runStreamingAsync("run", events::add).join();
+
+        List<AgentEventType> types = eventTypes(events);
+        assertTrue(types.contains(AgentEventType.TOOL_STARTED));
+        assertTrue(types.contains(AgentEventType.TOOL_COMPLETED));
+        assertEquals(1, Collections.frequency(types, AgentEventType.TURN_STARTED));
+        assertEquals(2, Collections.frequency(types, AgentEventType.STEP_STARTED));
+        assertEquals(2, Collections.frequency(types, AgentEventType.STEP_COMPLETED));
+        assertEquals(1, Collections.frequency(types, AgentEventType.TURN_COMPLETED));
+        AgentEvent completed = events.stream()
+            .filter(event -> event.getType() == AgentEventType.TOOL_COMPLETED)
+            .findFirst()
+            .get();
+        assertEquals("hello", completed.getToolExecution().getResult().getContent());
+    }
+
+    @Test
+    void cancellingAgentCancelsActiveModelStream() {
+        AtomicBoolean modelCancelled = new AtomicBoolean();
+        StreamingChatModel model = new StreamingChatModel() {
+            @Override
+            public CompletableFuture<ModelResponse> generate(ModelRequest request) {
+                throw new AssertionError("Streaming execution must use generateStream");
+            }
+
+            @Override
+            public ModelStream generateStream(ModelRequest request,
+                                               ModelStreamListener listener) {
+                return new ModelStream(
+                    new CompletableFuture<ModelResponse>(),
+                    () -> modelCancelled.set(true)
+                );
+            }
+        };
+        Agent agent = agentBuilder("cancel", model).build();
+        List<AgentEvent> events = new ArrayList<AgentEvent>();
+
+        CompletableFuture<AgentResult> execution =
+            agent.runStreamingAsync("wait", events::add);
+
+        assertTrue(execution.cancel(true));
+        assertTrue(modelCancelled.get());
+        assertEquals(AgentEventType.TURN_CANCELLED,
+            events.get(events.size() - 1).getType());
+    }
+
+    @Test
+    void cancellingParentCancelsActiveChildAgent() {
+        CompletableFuture<ModelResponse> childModelFuture =
+            new CompletableFuture<ModelResponse>();
+        Agent child = agentBuilder("child", request -> childModelFuture).build();
+        ScriptedChatModel parentModel = new ScriptedChatModel(
+            ModelResponse.of(ChatMessage.assistant(null, Collections.singletonList(
+                new ToolCall("delegate-1", "child", "{\"task\":\"wait\"}")
+            )))
+        );
+        Agent parent = agentBuilder("parent", parentModel).tool(child).build();
+
+        CompletableFuture<AgentResult> execution = parent.runAsync("delegate");
+
+        assertTrue(execution.cancel(true));
+        assertTrue(childModelFuture.isCancelled());
+    }
+
+    private static List<AgentEventType> eventTypes(List<AgentEvent> events) {
+        List<AgentEventType> types = new ArrayList<AgentEventType>();
+        for (AgentEvent event : events) {
+            types.add(event.getType());
+        }
+        return types;
     }
 
     private static AgentBuilderAdapter agentBuilder(String name, ChatModel model) {

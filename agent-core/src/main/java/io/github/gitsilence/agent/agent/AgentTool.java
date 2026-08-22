@@ -40,19 +40,39 @@ public final class AgentTool implements Tool {
         AgentRequest request = AgentRequest.builder()
             .input(arguments.requireString("task"))
             .metadata("parentRunId", context.getRunId())
+            .metadata("parentTurnId", context.getTurnId())
             .build();
 
-        return context.getRunner()
-            .runChildAsync(delegate, request, context.getInvocationPath())
-            .thenApply(result -> {
-                ToolResult toolResult = result.isCompleted()
-                    ? ToolResult.success(result.getOutput())
+        CompletableFuture<AgentResult> child = context.getRunner()
+            .runChildAsync(delegate, request, context.getInvocationPath());
+        CompletableFuture<ToolResult> result = new CompletableFuture<ToolResult>();
+        child.whenComplete((agentResult, error) -> {
+            if (result.isCancelled()) {
+                return;
+            }
+            if (error != null) {
+                result.completeExceptionally(error);
+                return;
+            }
+            try {
+                ToolResult toolResult = agentResult.isCompleted()
+                    ? ToolResult.success(agentResult.getOutput())
                     : ToolResult.failure(
-                        "Child agent stopped: " + result.getStopReason()
+                        "Child agent stopped: " + agentResult.getStopReason()
                     );
-                return toolResult
-                    .withMetadata("childRunId", result.getState().getRunId())
-                    .withMetadata("childStatus", result.getStatus().name());
-            });
+                result.complete(toolResult
+                    .withMetadata("childRunId", agentResult.getState().getRunId())
+                    .withMetadata("childTurnId", agentResult.getState().getTurnId())
+                    .withMetadata("childStatus", agentResult.getStatus().name()));
+            } catch (Throwable mappingError) {
+                result.completeExceptionally(mappingError);
+            }
+        });
+        result.whenComplete((value, error) -> {
+            if (result.isCancelled()) {
+                child.cancel(true);
+            }
+        });
+        return result;
     }
 }

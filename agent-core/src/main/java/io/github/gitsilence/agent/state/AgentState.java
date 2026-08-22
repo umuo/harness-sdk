@@ -139,6 +139,10 @@ public final class AgentState {
         return runId;
     }
 
+    public String getTurnId() {
+        return runId;
+    }
+
     public synchronized AgentStateSnapshot snapshot() {
         return new AgentStateSnapshot(
             runId,
