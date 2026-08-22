@@ -52,12 +52,38 @@ public final class ToolArguments {
         return value.intValue();
     }
 
+    public Optional<Integer> optionalInt(String name) {
+        JsonNode value = root.get(name);
+        if (value == null || value.isNull()) {
+            return Optional.empty();
+        }
+        if (!value.isIntegralNumber() || !value.canConvertToInt()) {
+            throw new IllegalArgumentException(
+                "Argument '" + name + "' must be an integer"
+            );
+        }
+        return Optional.of(value.intValue());
+    }
+
     public boolean requireBoolean(String name) {
         JsonNode value = require(name);
         if (!value.isBoolean()) {
             throw new IllegalArgumentException("Argument '" + name + "' must be a boolean");
         }
         return value.booleanValue();
+    }
+
+    public Optional<Boolean> optionalBoolean(String name) {
+        JsonNode value = root.get(name);
+        if (value == null || value.isNull()) {
+            return Optional.empty();
+        }
+        if (!value.isBoolean()) {
+            throw new IllegalArgumentException(
+                "Argument '" + name + "' must be a boolean"
+            );
+        }
+        return Optional.of(value.booleanValue());
     }
 
     public <T> T as(Class<T> type) {

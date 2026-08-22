@@ -1,0 +1,134 @@
+package io.github.gitsilence.agent.tools.builtin;
+
+import io.github.gitsilence.agent.tool.ToolErrorInfo;
+import io.github.gitsilence.agent.tool.ToolFailureException;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Objects;
+
+final class WorkspacePathResolver {
+
+    private final Path root;
+    private final boolean allowOutsideWorkspace;
+
+    WorkspacePathResolver(Path root, boolean allowOutsideWorkspace) {
+        Objects.requireNonNull(root, "root");
+        try {
+            Path absolute = root.toAbsolutePath().normalize();
+            if (!Files.isDirectory(absolute)) {
+                throw new IllegalArgumentException(
+                    "workspace root must be an existing directory: " + absolute
+                );
+            }
+            this.root = absolute.toRealPath();
+        } catch (IOException error) {
+            throw new IllegalArgumentException(
+                "Cannot resolve workspace root: " + root, error
+            );
+        }
+        this.allowOutsideWorkspace = allowOutsideWorkspace;
+    }
+
+    Path resolve(String input) {
+        if (input == null || input.trim().isEmpty()) {
+            throw failure(
+                "INVALID_PATH", "file_path must be a non-empty string",
+                "Provide a path relative to the workspace or an allowed absolute path."
+            );
+        }
+        Path supplied = Paths.get(input);
+        Path candidate = supplied.isAbsolute()
+            ? supplied.toAbsolutePath().normalize()
+            : root.resolve(supplied).normalize();
+        try {
+            Path existing = candidate;
+            while (existing != null
+                    && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
+                existing = existing.getParent();
+            }
+            if (existing == null) {
+                throw failure(
+                    "PATH_NOT_RESOLVABLE",
+                    "Cannot resolve path: " + candidate,
+                    "Use a path whose parent directory exists."
+                );
+            }
+            Path realExisting = existing.toRealPath();
+            Path resolved = realExisting.resolve(existing.relativize(candidate)).normalize();
+            if (!allowOutsideWorkspace && !resolved.startsWith(root)) {
+                throw outside(resolved);
+            }
+            return resolved;
+        } catch (IOException error) {
+            throw new ToolFailureException(
+                ToolErrorInfo.builder(
+                    "PATH_RESOLUTION_FAILED",
+                    "Cannot resolve path '" + input + "': " + error.getMessage()
+                ).retryable(true)
+                    .recoveryHint("Check the path and workspace permissions, then retry.")
+                    .detail("path", input)
+                    .build(),
+                error
+            );
+        }
+    }
+
+    Path resolveDirectory(String input) {
+        Path path = resolve(input == null ? "." : input);
+        if (!Files.exists(path)) {
+            throw failure(
+                "DIRECTORY_NOT_FOUND", "Directory not found: " + display(path),
+                "Choose an existing directory inside the workspace."
+            );
+        }
+        if (!Files.isDirectory(path)) {
+            throw failure(
+                "NOT_A_DIRECTORY", "Path is not a directory: " + display(path),
+                "Choose a directory path and retry."
+            );
+        }
+        return path;
+    }
+
+    String display(Path path) {
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!normalized.startsWith(root)) {
+            return normalized.toString();
+        }
+        String relative = root.relativize(normalized)
+            .toString().replace('\\', '/');
+        return relative.isEmpty() ? "." : relative;
+    }
+
+    Path getRoot() {
+        return root;
+    }
+
+    private ToolFailureException outside(Path path) {
+        return new ToolFailureException(
+            ToolErrorInfo.builder(
+                "PATH_OUTSIDE_WORKSPACE",
+                "Path is outside the configured workspace: " + path
+            ).retryable(true)
+                .recoveryHint("Use a path inside " + root + ".")
+                .detail("workspace", root)
+                .detail("path", path)
+                .build()
+        );
+    }
+
+    private static ToolFailureException failure(String code,
+                                                String message,
+                                                String recovery) {
+        return new ToolFailureException(
+            ToolErrorInfo.builder(code, message)
+                .retryable(true)
+                .recoveryHint(recovery)
+                .build()
+        );
+    }
+}

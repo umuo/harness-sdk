@@ -21,6 +21,8 @@
   interceptors.
 - Cancellation propagation from Agent execution to model and tool operations.
 - Lightweight ordered parallel-Agent composition.
+- Workspace-scoped `read_file`, `write_file`, `edit`, `glob`, and opt-in
+  `bash` Tools.
 - Runnable examples and scripted-model unit tests.
 
 ## Deliberately excluded

@@ -11,6 +11,8 @@ agent loop.
 - `agent-model-openai`: OpenAI-compatible Chat Completions and OpenAI
   Responses API adapters.
 - `agent-model-anthropic`: Anthropic Messages API adapter.
+- `agent-tools-builtin`: bounded workspace file, glob, edit and opt-in Bash
+  tools.
 - `agent-examples`: executable examples.
 
 All included model providers support both complete responses and streaming
@@ -30,6 +32,7 @@ mvn clean verify
 - [Model providers and streaming](docs/model-providers.md)
 - [Lifecycle events and plugins](docs/plugins.md)
 - [Tool results, truncation and errors](docs/tool-results.md)
+- [Built-in workspace tools](docs/builtin-tools.md)
 - [Multi-Agent composition](docs/multi-agent.md)
 - [OpenAI-compatible provider](docs/openai-provider.md)
 - [MVP scope and roadmap](docs/mvp.md)
