@@ -10,14 +10,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.logging.Logger;
 
 /**
  * Builds exporter-neutral traces and process-local metrics from Agent events.
  * One instance may safely be shared by parent and child Agents.
  */
-public final class AgentObservability implements AgentPlugin {
+public final class AgentObservability implements AgentPlugin, AutoCloseable {
 
     private final AgentTraceExporter exporter;
+    private final AgentObservabilityMode mode;
+    private final boolean ownsExporter;
     private final boolean captureContent;
     private final int maxCapturedContentCharacters;
     private final Map<String, Object> attributes;
@@ -27,6 +30,8 @@ public final class AgentObservability implements AgentPlugin {
 
     private AgentObservability(Builder builder) {
         this.exporter = builder.exporter;
+        this.mode = builder.mode;
+        this.ownsExporter = builder.ownsExporter;
         this.captureContent = builder.captureContent;
         this.maxCapturedContentCharacters =
             builder.maxCapturedContentCharacters;
@@ -39,6 +44,33 @@ public final class AgentObservability implements AgentPlugin {
         return new Builder();
     }
 
+    /** Completely disables trace assembly, metrics, logging, and export. */
+    public static AgentObservability disabled() {
+        return builder().off().build();
+    }
+
+    /** Writes one bounded JSON trace record through java.util.logging. */
+    public static AgentObservability logging() {
+        return builder().logging().build();
+    }
+
+    public static AgentObservability logging(Logger logger) {
+        return builder().logging(logger).build();
+    }
+
+    /** Sends traces asynchronously to the platform ingestion endpoint. */
+    public static AgentObservability platform(String endpoint) {
+        return builder().platform(
+            PlatformTraceExporter.builder(endpoint).build()
+        ).build();
+    }
+
+    public static AgentObservability platform(String endpoint, String apiKey) {
+        return builder().platform(
+            PlatformTraceExporter.builder(endpoint).apiKey(apiKey).build()
+        ).build();
+    }
+
     @Override
     public String name() {
         return "agent-observability";
@@ -47,6 +79,7 @@ public final class AgentObservability implements AgentPlugin {
     @Override
     public void onEvent(AgentEvent event) {
         Objects.requireNonNull(event, "event");
+        if (mode == AgentObservabilityMode.OFF) return;
         if (event.getType() == AgentEventType.TURN_STARTED) {
             AgentTraceAssembler created = new AgentTraceAssembler(
                 event,
@@ -91,8 +124,32 @@ public final class AgentObservability implements AgentPlugin {
         return active.size();
     }
 
+    public AgentObservabilityMode getMode() {
+        return mode;
+    }
+
+    public boolean isEnabled() {
+        return mode != AgentObservabilityMode.OFF;
+    }
+
+    public AgentTraceExporter getExporter() {
+        return exporter;
+    }
+
+    @Override
+    public void close() {
+        if (!ownsExporter || !(exporter instanceof AutoCloseable)) return;
+        try {
+            ((AutoCloseable) exporter).close();
+        } catch (Throwable ignored) {
+            metrics.incrementExporterFailures();
+        }
+    }
+
     public static final class Builder {
         private AgentTraceExporter exporter = AgentTraceExporter.noop();
+        private AgentObservabilityMode mode = AgentObservabilityMode.CUSTOM;
+        private boolean ownsExporter;
         private boolean captureContent;
         private int maxCapturedContentCharacters = 4_096;
         private final Map<String, Object> attributes =
@@ -100,6 +157,42 @@ public final class AgentObservability implements AgentPlugin {
 
         public Builder exporter(AgentTraceExporter exporter) {
             this.exporter = Objects.requireNonNull(exporter, "exporter");
+            this.mode = AgentObservabilityMode.CUSTOM;
+            this.ownsExporter = false;
+            return this;
+        }
+
+        public Builder off() {
+            this.exporter = AgentTraceExporter.noop();
+            this.mode = AgentObservabilityMode.OFF;
+            this.ownsExporter = false;
+            return this;
+        }
+
+        public Builder logging() {
+            return logging(new LoggingTraceExporter());
+        }
+
+        public Builder logging(Logger logger) {
+            return logging(new LoggingTraceExporter(logger));
+        }
+
+        public Builder logging(LoggingTraceExporter exporter) {
+            this.exporter = Objects.requireNonNull(exporter, "exporter");
+            this.mode = AgentObservabilityMode.LOGGING;
+            this.ownsExporter = false;
+            return this;
+        }
+
+        /**
+         * Transfers lifecycle ownership of the platform exporter to the
+         * resulting observability plugin. Closing the plugin drains and closes
+         * the exporter.
+         */
+        public Builder platform(PlatformTraceExporter exporter) {
+            this.exporter = Objects.requireNonNull(exporter, "exporter");
+            this.mode = AgentObservabilityMode.PLATFORM;
+            this.ownsExporter = true;
             return this;
         }
 

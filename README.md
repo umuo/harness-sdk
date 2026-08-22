@@ -14,6 +14,8 @@ agent loop.
 - `agent-tools-builtin`: bounded workspace file, glob, edit and opt-in Bash
   tools.
 - `agent-examples`: executable examples.
+- `agent-observability-web`: standalone Next.js trace ingestion service and
+  dashboard (not part of the Maven reactor).
 
 All included model providers support both complete responses and streaming
 responses. Agents expose model deltas and execution lifecycle events through
@@ -35,6 +37,7 @@ mvn clean verify
 - [MCP client and Tool integration](docs/mcp.md)
 - [Lifecycle events and plugins](docs/plugins.md)
 - [Agent observability](docs/observability.md)
+- [Observability web platform](docs/observability-platform.md)
 - [Tool results, preservation and errors](docs/tool-results.md)
 - [Built-in workspace tools](docs/builtin-tools.md)
 - [Multi-Agent composition](docs/multi-agent.md)

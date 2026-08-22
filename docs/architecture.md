@@ -241,8 +241,10 @@ Trace ID
 It also aggregates status, call, Token, error and duration counters. Content
 capture is bounded and disabled by default. Agent-as-Tool propagates the trace
 ID and links the child Turn span to the parent Tool span while retaining
-separate State ownership. No OpenTelemetry, metrics backend or logging API is
-required by Core; integrations implement the narrow exporter boundary. See
+separate State ownership. Core offers OFF, JDK logging, bounded asynchronous
+HTTP platform, and custom exporter modes without OpenTelemetry, Micrometer, or
+Spring dependencies. The Next.js console consumes the versioned JSON boundary
+and is deliberately not part of the Java runtime. See
 [Agent observability](observability.md).
 
 Cancelling the returned Agent future propagates to the active model stream or

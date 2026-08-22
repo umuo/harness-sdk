@@ -63,6 +63,34 @@ oldest trace and increments `getDroppedTraceCount()`. It is intended for unit
 tests, local diagnostics, and small embedded applications—not as a durable
 production trace store.
 
+## Output modes
+
+The SDK makes the observability destination explicit. The selected mode is
+available through `getMode()`:
+
+```java
+// No trace assembly, metrics, logging, or transport work.
+AgentObservability off = AgentObservability.disabled();
+
+// One versioned JSON document per completed Turn via java.util.logging.
+AgentObservability logs = AgentObservability.logging();
+
+// Bounded, asynchronous HTTP delivery to the bundled web platform.
+AgentObservability platform = AgentObservability.platform(
+    "http://localhost:3000/api/traces",
+    System.getenv("AGENT_OBSERVABILITY_API_KEY")
+);
+
+// Application-defined destination. Metrics and trace assembly stay enabled.
+AgentObservability custom = AgentObservability.builder()
+    .exporter(trace -> telemetryBackend.write(trace))
+    .build();
+```
+
+Register exactly the chosen instance with `.plugin(observability)`. `OFF`
+returns immediately on every lifecycle event, so it has lower overhead than a
+no-op custom exporter and its local metrics remain zero.
+
 ## Exporters
 
 `AgentTraceExporter` deliberately has one small method:
@@ -73,13 +101,53 @@ AgentTraceExporter exporter = trace -> {
 };
 ```
 
-The export call is synchronous and runs after a terminal Turn event. Keep it
-short or hand the immutable trace to a bounded application queue. Exporter
-exceptions are isolated from the Agent and counted by
-`AgentMetricsSnapshot.getExporterFailures()`.
+Custom and logging export calls run after a terminal Turn event. Custom
+exporters should return quickly. Exporter exceptions are isolated from the
+Agent and counted by `AgentMetricsSnapshot.getExporterFailures()`.
 
-This module does not depend on OpenTelemetry, Micrometer, Spring, or a logging
-backend. Adapters can map:
+`PlatformTraceExporter` supplies the bounded background queue needed for HTTP:
+
+```java
+PlatformTraceExporter transport = PlatformTraceExporter.builder(
+        "https://observability.example.com/api/traces")
+    .apiKey(System.getenv("AGENT_OBSERVABILITY_API_KEY"))
+    .queueCapacity(2_000)
+    .connectTimeout(Duration.ofSeconds(3))
+    .readTimeout(Duration.ofSeconds(5))
+    .maxAttempts(3)
+    .retryDelay(Duration.ofMillis(200))
+    .maxPayloadBytes(2 * 1024 * 1024)
+    .build();
+
+AgentObservability observability = AgentObservability.builder()
+    .platform(transport)
+    .attribute("service.name", "coding-assistant")
+    .build();
+```
+
+The Agent thread only offers an immutable trace to the queue. When the queue is
+full, the newest trace is dropped instead of applying backpressure to the
+Agent Loop. Transport health is available from `getAcceptedCount()`,
+`getSentCount()`, `getFailedCount()`, `getDroppedCount()`, `getQueuedCount()`,
+and `getLastError()`. HTTP 408, 429, and 5xx responses are retried; other 4xx
+responses fail immediately.
+
+The platform builder transfers exporter lifecycle ownership to
+`AgentObservability`. Close the shared plugin during application shutdown to
+drain its queue up to the configured shutdown timeout:
+
+```java
+observability.close();
+```
+
+For tests or a controlled checkpoint, `transport.flush(timeout)` waits for all
+currently accepted traces. Agent shutdown does not happen automatically when
+an individual Turn completes because one observability instance is normally
+shared by many Agents.
+
+This module does not depend on OpenTelemetry, Micrometer, Spring, or an external
+logging backend. The logging mode uses only `java.util.logging`. Adapters can
+map:
 
 - `AgentTrace` and `AgentSpan` to distributed traces;
 - `AgentMetricsSnapshot` to counters, gauges, and duration sums;
@@ -173,6 +241,9 @@ parent Agent-Tool span.
 - cancellation closes unfinished spans as `CANCELLED`;
 - plugin/exporter failures never alter Agent execution.
 
-The first version intentionally does not provide sampling, durable storage,
-histograms, an async exporter queue, a telemetry server, or vendor SDK
-dependencies. Those remain adapters around this stable trace/export boundary.
+The wire format has `schemaVersion: "1"` and is encoded explicitly by
+`AgentTraceJsonCodec`; it does not expose Jackson's representation of the Java
+classes as an accidental protocol. The bundled web service accepts that
+version and provides an MVP trace console. Sampling, histograms,
+OpenTelemetry/vendor SDKs, and production database storage remain outside
+Core. See [Observability web platform](observability-platform.md).
