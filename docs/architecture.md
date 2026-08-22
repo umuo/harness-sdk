@@ -89,6 +89,13 @@ Model errors fail the invocation. Tool errors either become error tool
 messages (`REPORT_TO_MODEL`) or fail the invocation (`FAIL_FAST`). Reaching the
 step limit is a normal `STOPPED` result rather than an exception.
 
+Before a Tool result is recorded or appended to messages, the Agent's
+`ToolResultPolicy` applies a final model-context bound. The default policy keeps
+the beginning and end within 2,000 lines and 50 KiB and adds explicit omission
+metadata. Tools that can produce unbounded data must still bound acquisition;
+the context policy is a last defense, not a substitute for streaming or
+pagination.
+
 ## Concurrency
 
 The public asynchronous contract uses `CompletableFuture`. Tool batches can be

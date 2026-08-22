@@ -101,6 +101,22 @@ Configure `.parallelToolCalls(true)` only when the registered tools can safely
 run concurrently. Even in parallel mode, results are appended to messages in
 the model's original tool-call order.
 
+Every result passes through a final `ToolResultPolicy` before it enters State or
+model history. The default `BoundedToolResultPolicy` limits output to 50 KiB and
+2,000 lines with a head/tail preview. Applications can replace it:
+
+```java
+Agent agent = Agent.builder()
+    .name("assistant")
+    .model(chatModel)
+    .toolResultPolicy(new BoundedToolResultPolicy(32 * 1024, 1000))
+    .build();
+```
+
+Tools can throw `ToolFailureException` with `ToolErrorInfo` when the model needs
+a stable error code and an explicit recovery instruction. See [Tool results,
+truncation and errors](tool-results.md).
+
 ## Stream a model response
 
 Streaming is provider-neutral at the Model layer:

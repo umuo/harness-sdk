@@ -13,6 +13,7 @@ import io.github.gitsilence.agent.tool.Tool;
 import io.github.gitsilence.agent.tool.ToolErrorPolicy;
 import io.github.gitsilence.agent.tool.ToolExecutionMode;
 import io.github.gitsilence.agent.tool.ToolRegistry;
+import io.github.gitsilence.agent.tool.ToolResultPolicy;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -33,6 +34,7 @@ public final class Agent {
     private final ToolExecutionMode toolExecutionMode;
     private final ToolErrorPolicy toolErrorPolicy;
     private final Duration toolTimeout;
+    private final ToolResultPolicy toolResultPolicy;
     private final List<TerminationCondition> terminationConditions;
     private final List<AgentPlugin> plugins;
     private final List<ModelInterceptor> modelInterceptors;
@@ -48,6 +50,7 @@ public final class Agent {
           ToolExecutionMode toolExecutionMode,
           ToolErrorPolicy toolErrorPolicy,
           Duration toolTimeout,
+          ToolResultPolicy toolResultPolicy,
           List<TerminationCondition> terminationConditions,
           List<AgentPlugin> plugins,
           List<ModelInterceptor> modelInterceptors,
@@ -62,6 +65,7 @@ public final class Agent {
         this.toolExecutionMode = toolExecutionMode;
         this.toolErrorPolicy = toolErrorPolicy;
         this.toolTimeout = toolTimeout;
+        this.toolResultPolicy = toolResultPolicy;
         this.terminationConditions = Collections.unmodifiableList(
             new ArrayList<TerminationCondition>(terminationConditions)
         );
@@ -126,6 +130,7 @@ public final class Agent {
     public ToolExecutionMode getToolExecutionMode() { return toolExecutionMode; }
     public ToolErrorPolicy getToolErrorPolicy() { return toolErrorPolicy; }
     public Duration getToolTimeout() { return toolTimeout; }
+    public ToolResultPolicy getToolResultPolicy() { return toolResultPolicy; }
     public List<TerminationCondition> getTerminationConditions() {
         return terminationConditions;
     }

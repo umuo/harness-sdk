@@ -26,6 +26,7 @@ public final class ToolExecutor {
     private final ToolExecutionMode mode;
     private final ToolErrorPolicy errorPolicy;
     private final Duration timeout;
+    private final ToolResultPolicy resultPolicy;
     private final List<ToolInterceptor> interceptors;
 
     public ToolExecutor(ToolRegistry registry,
@@ -33,6 +34,7 @@ public final class ToolExecutor {
                         ToolErrorPolicy errorPolicy,
                         Duration timeout) {
         this(registry, mode, errorPolicy, timeout,
+            BoundedToolResultPolicy.defaults(),
             Collections.<ToolInterceptor>emptyList());
     }
 
@@ -41,10 +43,21 @@ public final class ToolExecutor {
                         ToolErrorPolicy errorPolicy,
                         Duration timeout,
                         List<ToolInterceptor> interceptors) {
+        this(registry, mode, errorPolicy, timeout,
+            BoundedToolResultPolicy.defaults(), interceptors);
+    }
+
+    public ToolExecutor(ToolRegistry registry,
+                        ToolExecutionMode mode,
+                        ToolErrorPolicy errorPolicy,
+                        Duration timeout,
+                        ToolResultPolicy resultPolicy,
+                        List<ToolInterceptor> interceptors) {
         this.registry = registry;
         this.mode = mode;
         this.errorPolicy = errorPolicy;
         this.timeout = timeout;
+        this.resultPolicy = Objects.requireNonNull(resultPolicy, "resultPolicy");
         this.interceptors = Collections.unmodifiableList(
             new ArrayList<ToolInterceptor>(
                 Objects.requireNonNull(interceptors, "interceptors")
@@ -219,9 +232,19 @@ public final class ToolExecutor {
             new CompletableFuture<ToolExecutionRecord>();
         timed.whenComplete((toolResult, error) -> {
             if (error == null && toolResult != null) {
-                result.complete(new ToolExecutionRecord(
-                    call, executedCall.get(), toolResult, startedAt, Instant.now()
-                ));
+                try {
+                    result.complete(new ToolExecutionRecord(
+                        call,
+                        executedCall.get(),
+                        applyResultPolicy(toolResult),
+                        startedAt,
+                        Instant.now()
+                    ));
+                } catch (Throwable policyError) {
+                    completeFailure(
+                        result, call, executedCall.get(), startedAt, policyError
+                    );
+                }
                 return;
             }
             Throwable actual = error == null
@@ -283,8 +306,15 @@ public final class ToolExecutor {
             CancellationGroup cancellations) {
         Optional<Tool> resolved = registry.find(call.getName());
         if (!resolved.isPresent()) {
-            return Futures.failed(new IllegalArgumentException(
-                "Unknown tool: " + call.getName()
+            return Futures.failed(new ToolFailureException(
+                ToolErrorInfo.builder(
+                    "UNKNOWN_TOOL", "Unknown tool: " + call.getName()
+                ).retryable(true)
+                    .recoveryHint(
+                        "Use a tool name from the definitions supplied by the Agent."
+                    )
+                    .detail("tool", call.getName())
+                    .build()
             ));
         }
         final ToolArguments arguments;
@@ -334,17 +364,28 @@ public final class ToolExecutor {
             target.completeExceptionally(error);
             return;
         }
-        String message = error.getMessage();
-        if (message == null || message.trim().isEmpty()) {
-            message = error.getClass().getSimpleName();
+        try {
+            ToolResult failure = ToolResult.failure(
+                ToolErrors.from(error, executedCall.getName())
+            );
+            target.complete(new ToolExecutionRecord(
+                call,
+                executedCall,
+                applyResultPolicy(failure),
+                startedAt,
+                Instant.now()
+            ));
+        } catch (Throwable policyError) {
+            target.completeExceptionally(policyError);
         }
-        target.complete(new ToolExecutionRecord(
-            call,
-            executedCall,
-            ToolResult.failure("Tool error: " + message),
-            startedAt,
-            Instant.now()
-        ));
+    }
+
+    private ToolResult applyResultPolicy(ToolResult result) {
+        ToolResult processed = resultPolicy.apply(result);
+        if (processed == null) {
+            throw new IllegalStateException("ToolResultPolicy returned null");
+        }
+        return processed;
     }
 
     private CompletableFuture<ToolResult> withTimeout(

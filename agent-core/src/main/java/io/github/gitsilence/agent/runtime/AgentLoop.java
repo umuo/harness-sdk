@@ -59,6 +59,7 @@ final class AgentLoop {
             agent.getToolExecutionMode(),
             agent.getToolErrorPolicy(),
             agent.getToolTimeout(),
+            agent.getToolResultPolicy(),
             agent.getToolInterceptors()
         );
     }

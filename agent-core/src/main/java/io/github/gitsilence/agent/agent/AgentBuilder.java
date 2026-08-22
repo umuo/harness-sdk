@@ -9,10 +9,12 @@ import io.github.gitsilence.agent.runtime.AgentRunner;
 import io.github.gitsilence.agent.runtime.TerminationCondition;
 import io.github.gitsilence.agent.skill.Skill;
 import io.github.gitsilence.agent.tool.AnnotatedTools;
+import io.github.gitsilence.agent.tool.BoundedToolResultPolicy;
 import io.github.gitsilence.agent.tool.DefaultToolRegistry;
 import io.github.gitsilence.agent.tool.Tool;
 import io.github.gitsilence.agent.tool.ToolErrorPolicy;
 import io.github.gitsilence.agent.tool.ToolExecutionMode;
+import io.github.gitsilence.agent.tool.ToolResultPolicy;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -35,6 +37,7 @@ public final class AgentBuilder {
     private ToolExecutionMode toolExecutionMode = ToolExecutionMode.SEQUENTIAL;
     private ToolErrorPolicy toolErrorPolicy = ToolErrorPolicy.REPORT_TO_MODEL;
     private Duration toolTimeout = Duration.ofSeconds(60);
+    private ToolResultPolicy toolResultPolicy = BoundedToolResultPolicy.defaults();
     private AgentRunner runner = AgentRunner.shared();
 
     public AgentBuilder name(String name) {
@@ -111,6 +114,11 @@ public final class AgentBuilder {
         return this;
     }
 
+    public AgentBuilder toolResultPolicy(ToolResultPolicy policy) {
+        this.toolResultPolicy = Objects.requireNonNull(policy, "policy");
+        return this;
+    }
+
     public AgentBuilder terminationCondition(TerminationCondition condition) {
         terminationConditions.add(Objects.requireNonNull(condition, "condition"));
         return this;
@@ -171,6 +179,7 @@ public final class AgentBuilder {
             toolExecutionMode,
             toolErrorPolicy,
             toolTimeout,
+            toolResultPolicy,
             terminationConditions,
             plugins,
             modelInterceptors,

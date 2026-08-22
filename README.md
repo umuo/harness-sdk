@@ -29,6 +29,7 @@ mvn clean verify
 - [API guide](docs/api-guide.md)
 - [Model providers and streaming](docs/model-providers.md)
 - [Lifecycle events and plugins](docs/plugins.md)
+- [Tool results, truncation and errors](docs/tool-results.md)
 - [Multi-Agent composition](docs/multi-agent.md)
 - [OpenAI-compatible provider](docs/openai-provider.md)
 - [MVP scope and roadmap](docs/mvp.md)
