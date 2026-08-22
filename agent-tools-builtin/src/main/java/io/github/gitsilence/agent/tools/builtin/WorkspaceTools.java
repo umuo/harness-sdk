@@ -2,6 +2,7 @@ package io.github.gitsilence.agent.tools.builtin;
 
 import io.github.gitsilence.agent.skill.Skill;
 import io.github.gitsilence.agent.tool.Tool;
+import io.github.gitsilence.agent.tool.ToolOutputStore;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -25,7 +26,9 @@ public final class WorkspaceTools {
     private WorkspaceTools(Builder builder) {
         validate(builder);
         WorkspacePathResolver paths = new WorkspacePathResolver(
-            builder.root, builder.allowOutsideWorkspace
+            builder.root,
+            builder.allowOutsideWorkspace,
+            builder.toolOutputDirectory
         );
         FileObservationTracker observations =
             new FileObservationTracker(builder.requireReadBeforeMutation);
@@ -43,11 +46,16 @@ public final class WorkspaceTools {
         this.edit = EditTool.create(
             paths, observations, locks, builder.maxEditableBytes
         );
+        ToolOutputStore outputStore = new ToolOutputStore(
+            builder.toolOutputDirectory
+        );
         this.glob = GlobTool.create(
-            paths, builder.globMaxResults, builder.globMaxScannedEntries
+            paths, builder.globMaxResults, builder.globMaxScannedEntries,
+            outputStore
         );
         Path spill = builder.bashSpillDirectory == null
-            ? null : paths.resolve(builder.bashSpillDirectory.toString());
+            ? builder.toolOutputDirectory
+            : paths.resolve(builder.bashSpillDirectory.toString());
         this.bash = builder.bashEnabled
             ? new BashTool(
                 paths,
@@ -151,6 +159,7 @@ public final class WorkspaceTools {
         private int bashMaxTimeoutMillis = 55000;
         private int bashMaxStreamBytes = 24 * 1024;
         private Path bashSpillDirectory;
+        private Path toolOutputDirectory = ToolOutputStore.defaultDirectory();
 
         private Builder(Path root) {
             this.root = Objects.requireNonNull(root, "root");
@@ -228,6 +237,12 @@ public final class WorkspaceTools {
 
         public Builder bashSpillDirectory(Path directory) {
             this.bashSpillDirectory = directory;
+            return this;
+        }
+
+        public Builder toolOutputDirectory(Path directory) {
+            this.toolOutputDirectory = Objects.requireNonNull(directory, "directory")
+                .toAbsolutePath().normalize();
             return this;
         }
 

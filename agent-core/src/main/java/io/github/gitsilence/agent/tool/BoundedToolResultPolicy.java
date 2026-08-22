@@ -1,6 +1,9 @@
 package io.github.gitsilence.agent.tool;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -14,8 +17,21 @@ public final class BoundedToolResultPolicy implements ToolResultPolicy {
 
     private final int maxBytes;
     private final int maxLines;
+    private final ToolOutputStore outputStore;
 
     public BoundedToolResultPolicy(int maxBytes, int maxLines) {
+        this(maxBytes, maxLines, ToolOutputStore.systemTemporary());
+    }
+
+    public BoundedToolResultPolicy(int maxBytes,
+                                   int maxLines,
+                                   Path outputDirectory) {
+        this(maxBytes, maxLines, new ToolOutputStore(outputDirectory));
+    }
+
+    public BoundedToolResultPolicy(int maxBytes,
+                                   int maxLines,
+                                   ToolOutputStore outputStore) {
         if (maxBytes < 256) {
             throw new IllegalArgumentException("maxBytes must be at least 256");
         }
@@ -24,6 +40,7 @@ public final class BoundedToolResultPolicy implements ToolResultPolicy {
         }
         this.maxBytes = maxBytes;
         this.maxLines = maxLines;
+        this.outputStore = Objects.requireNonNull(outputStore, "outputStore");
     }
 
     public static BoundedToolResultPolicy defaults() {
@@ -42,10 +59,10 @@ public final class BoundedToolResultPolicy implements ToolResultPolicy {
             return result;
         }
 
-        String marker = "\n\n[tool output truncated: original "
-            + originalBytes + " UTF-8 bytes / " + originalLines
-            + " lines; showing the beginning and end. "
-            + "Refine the tool call or use pagination to retrieve omitted content.]\n\n";
+        ToolResult preserved = preserve(result, content);
+        String marker = "\n\n[tool output truncated: "
+            + originalBytes + "B/" + originalLines + " lines; "
+            + references(preserved.getOutputReferences()) + "]\n\n";
         int contentBudget = Math.max(0, maxBytes - utf8Bytes(marker));
         TextParts lineParts = selectLines(content, maxLines - 3);
         int headBudget = (contentBudget + 1) / 2;
@@ -54,7 +71,7 @@ public final class BoundedToolResultPolicy implements ToolResultPolicy {
         String tail = utf8Suffix(lineParts.tail, tailBudget);
         String bounded = head + marker + tail;
 
-        return result.withContent(bounded)
+        return preserved.withContent(bounded)
             .withMetadata("toolOutputTruncated", true)
             .withMetadata("toolOutputOriginalBytes", originalBytes)
             .withMetadata("toolOutputOriginalLines", originalLines)
@@ -64,6 +81,57 @@ public final class BoundedToolResultPolicy implements ToolResultPolicy {
 
     public int getMaxBytes() { return maxBytes; }
     public int getMaxLines() { return maxLines; }
+    public ToolOutputStore getOutputStore() { return outputStore; }
+
+    private ToolResult preserve(ToolResult result, String content) {
+        if (!result.getOutputReferences().isEmpty()) {
+            return result.withMetadata("toolOutputPreservation", "existing_reference");
+        }
+        final Path path;
+        try {
+            path = outputStore.writeUtf8("tool-output-", content);
+        } catch (IOException error) {
+            throw new IllegalStateException(
+                "Cannot preserve complete Tool output in "
+                    + outputStore.getDirectory(),
+                error
+            );
+        }
+        return result
+            .withOutputReference(ToolOutputReference.temporaryFile(
+                path,
+                "complete Tool result"
+            ))
+            .withMetadata("toolOutputPreservation", "temporary_file")
+            .withMetadata("toolOutputFullPath", path.toString());
+    }
+
+    private static String references(List<ToolOutputReference> references) {
+        StringBuilder text = new StringBuilder();
+        if (references.size() == 1) {
+            ToolOutputReference reference = references.get(0);
+            text.append(reference.getKind()
+                    == ToolOutputReference.Kind.SOURCE_FILE
+                ? "source: " : "full output: ");
+            appendReference(text, reference);
+            return text.toString();
+        }
+        text.append("complete outputs: ");
+        for (int i = 0; i < references.size(); i++) {
+            ToolOutputReference reference = references.get(i);
+            if (i > 0) text.append("; ");
+            appendReference(text, reference);
+        }
+        return text.toString();
+    }
+
+    private static void appendReference(StringBuilder text,
+                                        ToolOutputReference reference) {
+        text.append(reference.getPath());
+        if (!reference.getInstruction().isEmpty()) {
+            text.append(" (").append(reference.getInstruction()).append(')');
+        }
+    }
 
     private static TextParts selectLines(String value, int retainedLines) {
         int total = lineCount(value);

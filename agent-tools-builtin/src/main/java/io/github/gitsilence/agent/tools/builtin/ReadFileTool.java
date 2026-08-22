@@ -3,6 +3,7 @@ package io.github.gitsilence.agent.tools.builtin;
 import io.github.gitsilence.agent.tool.AbstractTool;
 import io.github.gitsilence.agent.tool.Tool;
 import io.github.gitsilence.agent.tool.ToolContext;
+import io.github.gitsilence.agent.tool.ToolOutputReference;
 import io.github.gitsilence.agent.tool.ToolResult;
 import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
@@ -76,7 +77,7 @@ final class ReadFileTool extends AbstractTool<ReadFileTool.Input> {
                 "limit must be between 1 and " + defaultLimit
             );
         }
-        Path path = paths.resolve(input);
+        Path path = paths.resolveReadable(input);
         synchronized (locks.forPath(path)) {
             return read(
                 path, paths.display(path), offset, limit,
@@ -149,7 +150,11 @@ final class ReadFileTool extends AbstractTool<ReadFileTool.Input> {
                 .withMetadata("lineStart", window.lines.isEmpty() ? 0 : offset)
                 .withMetadata("lineEnd", end)
                 .withMetadata("totalLines", window.totalLines)
-                .withMetadata("truncated", window.capped || end < window.totalLines);
+                .withMetadata("truncated", window.capped || end < window.totalLines)
+                .withOutputReference(ToolOutputReference.sourceFile(
+                    path,
+                    "read_file offset/limit"
+                ));
         } catch (CharacterCodingException error) {
             throw BuiltinToolErrors.failure(
                 "INVALID_UTF8", "File is not valid UTF-8 text: " + displayPath,

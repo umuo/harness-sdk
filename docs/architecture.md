@@ -93,10 +93,13 @@ step limit is a normal `STOPPED` result rather than an exception.
 
 Before a Tool result is recorded or appended to messages, the Agent's
 `ToolResultPolicy` applies a final model-context bound. The default policy keeps
-the beginning and end within 2,000 lines and 50 KiB and adds explicit omission
-metadata. Tools that can produce unbounded data must still bound acquisition;
-the context policy is a last defense, not a substitute for streaming or
-pagination.
+the beginning and end within a 2,000-line/50-KiB preview and adds explicit
+omission metadata. Before shortening an unreferenced result, it persists the
+exact content and adds a `ToolOutputReference`. Producer-level pagination or
+stream capture can attach an original-source or temporary-file reference; the
+policy reuses it instead of creating another copy. Tools that can produce
+unbounded data must still bound acquisition—the context policy is a last
+defense, not a substitute for streaming or pagination.
 
 ## Concurrency
 

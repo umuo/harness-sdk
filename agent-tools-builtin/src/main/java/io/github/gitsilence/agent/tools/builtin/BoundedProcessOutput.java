@@ -1,5 +1,7 @@
 package io.github.gitsilence.agent.tools.builtin;
 
+import io.github.gitsilence.agent.tool.ToolOutputStore;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,27 +24,24 @@ final class BoundedProcessOutput implements Runnable {
     private long totalBytes;
     private IOException error;
     private volatile boolean closedByOwner;
+    private volatile boolean retained;
 
     BoundedProcessOutput(InputStream input,
                          int maxBytes,
                          Path spillDirectory,
-                         String prefix) {
+                         String prefix) throws IOException {
         this.input = input;
         this.maxBytes = maxBytes;
         this.headLimit = (maxBytes + 1) / 2;
         this.tail = new byte[maxBytes / 2];
         this.head = new ByteArrayOutputStream(headLimit);
-        Path candidate = null;
-        if (spillDirectory != null) {
-            try {
-                Files.createDirectories(spillDirectory);
-                candidate = Files.createTempFile(spillDirectory, prefix, ".log");
-                spill = Files.newOutputStream(candidate);
-            } catch (IOException unavailable) {
-                candidate = null;
-                closeQuietly(spill);
-                spill = null;
-            }
+        ToolOutputStore outputStore = new ToolOutputStore(spillDirectory);
+        Path candidate = outputStore.createFile(prefix, ".log");
+        try {
+            spill = Files.newOutputStream(candidate);
+        } catch (IOException error) {
+            Files.deleteIfExists(candidate);
+            throw error;
         }
         this.spillPath = candidate;
     }
@@ -65,15 +64,14 @@ final class BoundedProcessOutput implements Runnable {
                 error = caught;
             }
         } finally {
-            closeQuietly(spill);
-            closeQuietly(input);
-            if (!isTruncated() && spillPath != null) {
-                try {
-                    Files.deleteIfExists(spillPath);
-                } catch (IOException ignored) {
-                    // A stale best-effort spill is safer than failing the tool result.
+            try {
+                if (spill != null) spill.close();
+            } catch (IOException caught) {
+                if (!closedByOwner && error == null) {
+                    error = caught;
                 }
             }
+            closeQuietly(input);
         }
     }
 
@@ -104,13 +102,31 @@ final class BoundedProcessOutput implements Runnable {
     }
 
     synchronized String retainedSpillPath() {
-        return isTruncated() && spillPath != null
+        return retained
             ? spillPath.toAbsolutePath().toString() : null;
+    }
+
+    void finalizeRetention(boolean keep) {
+        retained = keep;
+        if (!keep) {
+            try {
+                Files.deleteIfExists(spillPath);
+            } catch (IOException ignored) {
+                // A stale bounded capture is safer than failing a completed command.
+            }
+        }
     }
 
     void closeInput() {
         closedByOwner = true;
         closeQuietly(input);
+    }
+
+    void discard() {
+        closedByOwner = true;
+        closeQuietly(spill);
+        closeQuietly(input);
+        finalizeRetention(false);
     }
 
     private synchronized void retain(byte[] bytes, int length) {

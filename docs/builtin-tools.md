@@ -20,7 +20,6 @@ without adding filesystem or process APIs to `agent-core`:
 ```java
 WorkspaceTools workspace = WorkspaceTools.builder(Paths.get("."))
     .enableBash(true)
-    .bashSpillDirectory(Paths.get(".agent-output"))
     .build();
 
 Agent codingAgent = Agent.builder()
@@ -40,12 +39,12 @@ registered by default.
 | `read_file` | `file_path`, `offset?`, `limit?` | 1-based numbered UTF-8 windows; defaults to at most 2,000 lines, 2,000 characters per line and 50 KiB |
 | `write_file` | `file_path`, `content` | atomic create/full replacement; defaults to a 5-MiB input limit |
 | `edit` | `file_path`, `old_string`, `new_string`, `replace_all?` | exact literal replacement; unique match required unless `replace_all` is true; defaults to 5-MiB files |
-| `glob` | `pattern`, `path?` | files only, no symlink traversal, VCS metadata skipped, sorted and capped at 100 results |
-| `bash` | `command`, `workdir?`, `timeout_ms?` | separate bounded stdout/stderr capture, timeout, exit marker, optional full-output spill |
+| `glob` | `pattern`, `path?` | files only, no symlink traversal, VCS metadata skipped; sorted preview capped at 100, with all matches persisted on overflow |
+| `bash` | `command`, `workdir?`, `timeout_ms?` | separate bounded stdout/stderr preview, timeout and exit marker; both raw streams persisted when either overflows |
 
 A glob pattern without `/` matches basenames at every depth. Capped reads tell
-the model which offset to request next; capped glob results tell it to narrow
-the path or pattern.
+the model which offset to request next. A capped glob returns both a narrowing
+hint and a path containing every match in traversal order.
 
 ## Workspace boundary
 
@@ -53,6 +52,12 @@ Relative paths resolve against one configured root. Absolute paths and `..`
 cannot escape it by default. Existing ancestors are resolved through the real
 filesystem path before the boundary is checked, which also blocks a symlink
 inside the workspace from redirecting a file Tool outside it.
+
+There is one narrow exception: `read_file` may read files under the configured
+`toolOutputDirectory` so the model can inspect complete Tool output. This does
+not grant `write_file`, `edit`, or Bash working-directory access outside the
+workspace. The default output directory is
+`${java.io.tmpdir}/agent-sdk-tool-output`.
 
 This is an application guard, not an operating-system security sandbox. There
 is an unavoidable check/write race against unrelated external processes, and
@@ -81,11 +86,18 @@ workspace. It reports stdout, a marked stderr section, timeout and exit code.
 Non-zero exit and timeout results carry structured `COMMAND_EXIT_NON_ZERO` or
 `COMMAND_TIMED_OUT` errors plus a recovery instruction.
 
-Each stream keeps a bounded head/tail preview. If `bashSpillDirectory` is
-configured, the complete stream is written there from process start and kept
-only when truncation occurs; otherwise the marker explicitly says full output
-is unavailable. Spill files may contain secrets and are not automatically
-expired in the MVP—the application owns retention and cleanup.
+Each stream keeps a bounded head/tail preview. Complete raw streams are captured
+under `toolOutputDirectory`; the files are deleted when neither stream was
+truncated and both are retained when either stream was truncated. Keeping both
+means a later Agent-wide context bound can still recover everything without
+creating another combined-output copy. `bashSpillDirectory` remains available
+as a Bash-only override.
+
+Output files may contain secrets and are not automatically expired in the
+MVP—the application or operating-system temp policy owns retention and cleanup.
+Failure to prepare or write complete capture returns
+`OUTPUT_PRESERVATION_FAILED` or `OUTPUT_CAPTURE_FAILED`; it never silently
+reports a lossy success.
 
 The Bash Tool is intentionally **not a sandbox**. It inherits the Java process
 authority and environment, and a command can access paths outside the
@@ -106,6 +118,7 @@ returning Java stack traces. Examples include:
 - `EDIT_TEXT_NOT_FOUND`, `EDIT_TEXT_NOT_UNIQUE`
 - `GLOB_INVALID_PATTERN`, `GLOB_SCAN_LIMIT`
 - `COMMAND_START_FAILED`, `COMMAND_EXIT_NON_ZERO`, `COMMAND_TIMED_OUT`
+- `OUTPUT_PRESERVATION_FAILED`, `OUTPUT_CAPTURE_FAILED`
 
 These errors still pass through the Agent-wide `ToolResultPolicy` before they
 enter model history.
@@ -126,6 +139,8 @@ implementations:
   notices.
 - [OpenCode built-in Tools](https://github.com/anomalyco/opencode/tree/dev/packages/opencode/src/tool):
   the familiar read/write/edit/glob contracts and concise mutation results.
+- [Pi output accumulator](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/tools/output-accumulator.ts):
+  bounded process previews with recoverable full-output files.
 
 The Java SDK keeps the public surface smaller: there is no permission DSL,
 background job runtime, packaged ripgrep binary or dynamic Tool router in this

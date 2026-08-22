@@ -143,19 +143,27 @@ the model's original tool-call order.
 
 Every result passes through a final `ToolResultPolicy` before it enters State or
 model history. The default `BoundedToolResultPolicy` limits output to 50 KiB and
-2,000 lines with a head/tail preview. Applications can replace it:
+2,000 lines with a head/tail preview. Before shortening an unreferenced result,
+it saves the exact UTF-8 content under the OS temporary directory. A Tool can
+attach a `ToolOutputReference` when its original source or producer-level
+capture is already readable, preventing duplicate snapshots. Applications can
+replace the limits and output directory:
 
 ```java
+Path outputDirectory = Paths.get("/secure/runtime/agent-output");
+
 Agent agent = Agent.builder()
     .name("assistant")
     .model(chatModel)
-    .toolResultPolicy(new BoundedToolResultPolicy(32 * 1024, 1000))
+    .toolResultPolicy(new BoundedToolResultPolicy(
+        32 * 1024, 1000, outputDirectory
+    ))
     .build();
 ```
 
 Tools can throw `ToolFailureException` with `ToolErrorInfo` when the model needs
 a stable error code and an explicit recovery instruction. See [Tool results,
-truncation and errors](tool-results.md).
+preservation and errors](tool-results.md).
 
 ## Stream a model response
 

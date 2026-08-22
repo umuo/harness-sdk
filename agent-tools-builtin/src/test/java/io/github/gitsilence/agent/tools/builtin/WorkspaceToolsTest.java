@@ -7,7 +7,10 @@ import io.github.gitsilence.agent.model.ChatModel;
 import io.github.gitsilence.agent.model.ModelRequest;
 import io.github.gitsilence.agent.model.ModelResponse;
 import io.github.gitsilence.agent.model.ToolCall;
+import io.github.gitsilence.agent.tool.BoundedToolResultPolicy;
 import io.github.gitsilence.agent.tool.ToolExecutionRecord;
+import io.github.gitsilence.agent.tool.ToolOutputReference;
+import io.github.gitsilence.agent.tool.ToolResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
@@ -176,6 +179,7 @@ class WorkspaceToolsTest {
     @Test
     void globIsBoundedSortedAndSkipsVcsMetadata() throws Exception {
         Path root = workspace();
+        Path outputDirectory = temporary.resolve("glob-output");
         Files.createDirectories(root.resolve("src"));
         Files.createDirectories(root.resolve(".git"));
         Files.write(root.resolve("z.java"), new byte[0]);
@@ -184,6 +188,7 @@ class WorkspaceToolsTest {
         Files.write(root.resolve(".git/hidden.java"), new byte[0]);
         WorkspaceTools tools = WorkspaceTools.builder(root)
             .globMaxResults(2)
+            .toolOutputDirectory(outputDirectory)
             .build();
         ScriptedModel model = new ScriptedModel(
             tool("glob-1", "glob", "{\"pattern\":\"*.java\"}"),
@@ -192,11 +197,23 @@ class WorkspaceToolsTest {
 
         AgentResult result = agent(tools, model).run("find java");
 
-        String output = result.getState().getToolResults().get(0)
-            .getResult().getContent();
+        ToolExecutionRecord record = result.getState().getToolResults().get(0);
+        String output = record.getResult().getContent();
         assertTrue(output.startsWith("a.java\nsrc/b.java"));
         assertTrue(output.contains("showing 2 of 3 files"));
         assertFalse(output.contains("hidden.java"));
+        assertEquals(1, record.getResult().getOutputReferences().size());
+        ToolOutputReference reference = record.getResult()
+            .getOutputReferences().get(0);
+        assertEquals(ToolOutputReference.Kind.TEMPORARY_FILE, reference.getKind());
+        String complete = new String(
+            Files.readAllBytes(java.nio.file.Paths.get(reference.getPath())),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(complete.contains("a.java"));
+        assertTrue(complete.contains("src/b.java"));
+        assertTrue(complete.contains("z.java"));
+        assertFalse(complete.contains("hidden.java"));
     }
 
     @Test
@@ -215,6 +232,94 @@ class WorkspaceToolsTest {
 
         assertEquals("PATH_OUTSIDE_WORKSPACE", result.getState()
             .getToolResults().get(0).getResult().getErrorInfo().getCode());
+    }
+
+    @Test
+    void readPagesToolOutputWithoutCreatingASecondTemporaryCopy() throws Exception {
+        Path root = workspace();
+        Path outputDirectory = Files.createDirectories(
+            temporary.resolve("readable-tool-output")
+        );
+        Path completeOutput = outputDirectory.resolve("command.log");
+        StringBuilder content = new StringBuilder();
+        for (int i = 1; i <= 30; i++) {
+            content.append("line-").append(i).append('-')
+                .append("abcdefghijklmnopqrstuvwxyz").append('\n');
+        }
+        Files.write(
+            completeOutput,
+            content.toString().getBytes(StandardCharsets.UTF_8)
+        );
+        WorkspaceTools tools = WorkspaceTools.builder(root)
+            .toolOutputDirectory(outputDirectory)
+            .readLimit(20)
+            .readMaxLineLength(50)
+            .readMaxBytes(512)
+            .build();
+        ScriptedModel model = new ScriptedModel(
+            tool("read-1", "read_file",
+                "{\"file_path\":\"" + json(completeOutput.toString())
+                    + "\",\"limit\":20}"),
+            finalAnswer("done")
+        );
+        Agent agent = Agent.builder()
+            .name("coding-agent")
+            .description("coding-agent")
+            .model(model)
+            .skill(tools.asSkill())
+            .toolResultPolicy(new BoundedToolResultPolicy(
+                256, 5, outputDirectory
+            ))
+            .build();
+
+        AgentResult result = agent.run("inspect complete output");
+
+        ToolResult read = result.getState().getToolResults().get(0).getResult();
+        assertFalse(read.isError());
+        assertEquals("existing_reference",
+            read.getMetadata().get("toolOutputPreservation"));
+        assertEquals(ToolOutputReference.Kind.SOURCE_FILE,
+            read.getOutputReferences().get(0).getKind());
+        try (java.util.stream.Stream<Path> files = Files.list(outputDirectory)) {
+            assertEquals(1L, files.count());
+        }
+        assertEquals(content.toString(), new String(
+            Files.readAllBytes(completeOutput), StandardCharsets.UTF_8
+        ));
+    }
+
+    @Test
+    void toolOutputDirectoryIsReadableButNotWritableOutsideWorkspace()
+            throws Exception {
+        Path root = workspace();
+        Path outputDirectory = Files.createDirectories(
+            temporary.resolve("read-only-tool-output")
+        );
+        Path completeOutput = outputDirectory.resolve("command.log");
+        Files.write(
+            completeOutput, "original\n".getBytes(StandardCharsets.UTF_8)
+        );
+        WorkspaceTools tools = WorkspaceTools.builder(root)
+            .toolOutputDirectory(outputDirectory)
+            .build();
+        ScriptedModel model = new ScriptedModel(
+            tool("read-1", "read_file",
+                "{\"file_path\":\"" + json(completeOutput.toString()) + "\"}"),
+            tool("write-1", "write_file",
+                "{\"file_path\":\"" + json(completeOutput.toString())
+                    + "\",\"content\":\"changed\"}"),
+            finalAnswer("done")
+        );
+
+        AgentResult result = agent(tools, model).run("inspect but do not mutate");
+
+        assertFalse(result.getState().getToolResults().get(0)
+            .getResult().isError());
+        assertEquals("PATH_OUTSIDE_WORKSPACE", result.getState()
+            .getToolResults().get(1).getResult().getErrorInfo().getCode());
+        assertEquals("original\n", new String(
+            Files.readAllBytes(completeOutput), StandardCharsets.UTF_8
+        ));
     }
 
     @Test
@@ -268,10 +373,11 @@ class WorkspaceToolsTest {
     @Test
     void bashPreservesDiagnosticsAndSpillsTruncatedStreams() throws Exception {
         Path root = workspace();
+        Path outputDirectory = temporary.resolve("bash-output");
         WorkspaceTools tools = WorkspaceTools.builder(root)
             .enableBash(true)
             .bashMaxStreamBytes(256)
-            .bashSpillDirectory(root.resolve(".agent-output"))
+            .toolOutputDirectory(outputDirectory)
             .build();
         String command = "printf 'HEAD-'; "
             + "for i in {1..1000}; do printf x; done; "
@@ -297,6 +403,27 @@ class WorkspaceToolsTest {
         String spill = (String) record.getResult().getMetadata().get("stdoutSpillPath");
         assertNotNull(spill);
         assertTrue(Files.exists(java.nio.file.Paths.get(spill)));
+        assertTrue(java.nio.file.Paths.get(spill).startsWith(
+            outputDirectory.toRealPath()
+        ));
+        assertEquals(2, record.getResult().getOutputReferences().size());
+        for (ToolOutputReference reference
+                : record.getResult().getOutputReferences()) {
+            assertEquals(ToolOutputReference.Kind.TEMPORARY_FILE,
+                reference.getKind());
+        }
+        String complete = new String(
+            Files.readAllBytes(java.nio.file.Paths.get(spill)),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(complete.startsWith("HEAD-"));
+        assertTrue(complete.endsWith("-TAIL\n"));
+        String stderrSpill = (String) record.getResult().getMetadata()
+            .get("stderrSpillPath");
+        assertEquals("bad input\n", new String(
+            Files.readAllBytes(java.nio.file.Paths.get(stderrSpill)),
+            StandardCharsets.UTF_8
+        ));
     }
 
     @Test

@@ -32,7 +32,7 @@ mvn clean verify
 - [Tool authoring](docs/tools.md)
 - [Model providers and streaming](docs/model-providers.md)
 - [Lifecycle events and plugins](docs/plugins.md)
-- [Tool results, truncation and errors](docs/tool-results.md)
+- [Tool results, preservation and errors](docs/tool-results.md)
 - [Built-in workspace tools](docs/builtin-tools.md)
 - [Multi-Agent composition](docs/multi-agent.md)
 - [OpenAI-compatible provider](docs/openai-provider.md)

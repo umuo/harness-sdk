@@ -5,10 +5,14 @@ import io.github.gitsilence.agent.tool.Tool;
 import io.github.gitsilence.agent.tool.ToolContext;
 import io.github.gitsilence.agent.tool.ToolErrorInfo;
 import io.github.gitsilence.agent.tool.ToolFailureException;
+import io.github.gitsilence.agent.tool.ToolOutputReference;
+import io.github.gitsilence.agent.tool.ToolOutputStore;
 import io.github.gitsilence.agent.tool.ToolResult;
 import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
+import java.io.BufferedWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.FileVisitor;
 import java.nio.file.FileVisitOption;
@@ -36,16 +40,21 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
     private final WorkspacePathResolver paths;
     private final int maxResults;
     private final int maxScannedEntries;
+    private final ToolOutputStore outputStore;
 
     static Tool create(WorkspacePathResolver paths,
                        int maxResults,
-                       int maxScannedEntries) {
-        return new GlobTool(paths, maxResults, maxScannedEntries);
+                       int maxScannedEntries,
+                       ToolOutputStore outputStore) {
+        return new GlobTool(
+            paths, maxResults, maxScannedEntries, outputStore
+        );
     }
 
     private GlobTool(WorkspacePathResolver paths,
                      int maxResults,
-                     int maxScannedEntries) {
+                     int maxScannedEntries,
+                     ToolOutputStore outputStore) {
         super(
             "glob",
             "Find files by glob pattern inside the workspace. A pattern "
@@ -55,6 +64,7 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
         this.paths = paths;
         this.maxResults = maxResults;
         this.maxScannedEntries = maxScannedEntries;
+        this.outputStore = outputStore;
     }
 
     @Override
@@ -67,7 +77,8 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
             arguments.path == null ? "." : arguments.path
         );
         return execute(
-            paths, searchRoot, pattern, maxResults, maxScannedEntries
+            paths, searchRoot, pattern, maxResults, maxScannedEntries,
+            outputStore
         );
     }
 
@@ -83,7 +94,8 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
                                       Path searchRoot,
                                       String pattern,
                                       int maxResults,
-                                      int maxScannedEntries) {
+                                      int maxScannedEntries,
+                                      ToolOutputStore outputStore) {
         final PathMatcher matcher;
         final PathMatcher rootFallback;
         try {
@@ -121,6 +133,9 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
         final AtomicInteger matches = new AtomicInteger();
         final AtomicInteger scanned = new AtomicInteger();
         final AtomicInteger unreadable = new AtomicInteger();
+        final FullGlobOutput fullOutput = new FullGlobOutput(
+            outputStore, maxResults
+        );
         try {
             Files.walkFileTree(
                 searchRoot,
@@ -144,7 +159,7 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
                     @Override
                     public FileVisitResult visitFile(
                             Path file,
-                            BasicFileAttributes attributes) {
+                            BasicFileAttributes attributes) throws IOException {
                         checkScanLimit(scanned.incrementAndGet(), maxScannedEntries);
                         if (!attributes.isRegularFile()) {
                             return FileVisitResult.CONTINUE;
@@ -156,8 +171,9 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
                                     || !rootFallback.matches(candidate))) {
                             return FileVisitResult.CONTINUE;
                         }
-                        matches.incrementAndGet();
+                        int matchNumber = matches.incrementAndGet();
                         String display = paths.display(file);
+                        fullOutput.record(display, matchNumber);
                         retained.offer(display);
                         if (retained.size() > maxResults) {
                             retained.poll();
@@ -182,7 +198,9 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
                     }
                 }
             );
+            fullOutput.finish();
         } catch (ScanLimitException error) {
+            fullOutput.discard();
             throw new ToolFailureException(
                 ToolErrorInfo.builder(
                     "GLOB_SCAN_LIMIT",
@@ -197,7 +215,25 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
                     .build(),
                 error
             );
+        } catch (OutputPreservationException error) {
+            fullOutput.discard();
+            Throwable cause = error.getCause() == null
+                ? error : error.getCause();
+            throw new ToolFailureException(
+                ToolErrorInfo.builder(
+                    "OUTPUT_PRESERVATION_FAILED",
+                    "Cannot preserve complete glob output: "
+                        + cause.getMessage()
+                ).retryable(false)
+                    .recoveryHint(
+                        "Check available disk space and tool output directory permissions."
+                    )
+                    .detail("outputDirectory", outputStore.getDirectory())
+                    .build(),
+                cause
+            );
         } catch (IOException error) {
+            fullOutput.discard();
             throw BuiltinToolErrors.io("search", searchRoot, error);
         }
 
@@ -217,18 +253,29 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
         if (truncated) {
             output.append("\n\n(Results truncated: showing ")
                 .append(results.size()).append(" of ").append(matches.get())
-                .append(" files. Use a more specific path or pattern.)");
+                .append(" files. Full output: ")
+                .append(fullOutput.getPath())
+                .append("; use read_file with offset and limit.)");
         }
         if (unreadable.get() > 0) {
             output.append("\n[glob warning: skipped ")
                 .append(unreadable.get()).append(" unreadable paths]");
         }
-        return ToolResult.success(output.toString())
+        ToolResult result = ToolResult.success(output.toString())
             .withMetadata("count", matches.get())
             .withMetadata("returned", results.size())
             .withMetadata("truncated", truncated)
             .withMetadata("unreadable", unreadable.get())
             .withMetadata("searchRoot", paths.display(searchRoot));
+        if (truncated) {
+            result = result
+                .withMetadata("fullOutputPath", fullOutput.getPath().toString())
+                .withOutputReference(ToolOutputReference.temporaryFile(
+                    fullOutput.getPath(),
+                    "all glob matches; read_file offset/limit"
+                ));
+        }
+        return result;
     }
 
     private static void checkScanLimit(int scanned, int maximum) {
@@ -238,5 +285,89 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
     }
 
     private static final class ScanLimitException extends RuntimeException {
+    }
+
+    /** Lazily starts a complete traversal-order capture when the preview overflows. */
+    private static final class FullGlobOutput {
+        private final ToolOutputStore outputStore;
+        private final int threshold;
+        private final List<String> initialValues = new ArrayList<String>();
+        private Path path;
+        private BufferedWriter writer;
+
+        private FullGlobOutput(ToolOutputStore outputStore, int threshold) {
+            this.outputStore = outputStore;
+            this.threshold = threshold;
+        }
+
+        private void record(String value, int matchNumber) throws IOException {
+            try {
+                if (matchNumber <= threshold) {
+                    initialValues.add(value);
+                    return;
+                }
+                if (writer == null) {
+                    path = outputStore.createFile("glob-output-", ".txt");
+                    writer = Files.newBufferedWriter(
+                        path, StandardCharsets.UTF_8
+                    );
+                    for (String earlier : initialValues) {
+                        writeLine(earlier);
+                    }
+                    initialValues.clear();
+                }
+                writeLine(value);
+            } catch (IOException error) {
+                discard();
+                throw new OutputPreservationException(error);
+            }
+        }
+
+        private void writeLine(String value) throws IOException {
+            writer.write(value);
+            writer.newLine();
+        }
+
+        private void finish() throws IOException {
+            if (writer != null) {
+                try {
+                    writer.close();
+                    writer = null;
+                } catch (IOException error) {
+                    discard();
+                    throw new OutputPreservationException(error);
+                }
+            }
+        }
+
+        private void discard() {
+            if (writer != null) {
+                try {
+                    writer.close();
+                } catch (IOException ignored) {
+                    // Best effort while abandoning an incomplete traversal.
+                }
+                writer = null;
+            }
+            if (path != null) {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // Best effort cleanup for incomplete output.
+                }
+                path = null;
+            }
+            initialValues.clear();
+        }
+
+        private Path getPath() {
+            return path;
+        }
+    }
+
+    private static final class OutputPreservationException extends IOException {
+        private OutputPreservationException(IOException cause) {
+            super(cause);
+        }
     }
 }

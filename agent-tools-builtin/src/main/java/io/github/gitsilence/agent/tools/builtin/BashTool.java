@@ -5,6 +5,7 @@ import io.github.gitsilence.agent.tool.AbstractAsyncTool;
 import io.github.gitsilence.agent.tool.ToolContext;
 import io.github.gitsilence.agent.tool.ToolErrorInfo;
 import io.github.gitsilence.agent.tool.ToolFailureException;
+import io.github.gitsilence.agent.tool.ToolOutputReference;
 import io.github.gitsilence.agent.tool.ToolResult;
 import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
@@ -138,14 +139,32 @@ final class BashTool extends AbstractAsyncTool<BashTool.Input> {
                 return;
             }
             String prefix = "bash-" + context.getTurnId() + "-";
-            stdout = new BoundedProcessOutput(
-                process.getInputStream(), maxStreamBytes,
-                spillDirectory, prefix + "stdout-"
-            );
-            stderr = new BoundedProcessOutput(
-                process.getErrorStream(), maxStreamBytes,
-                spillDirectory, prefix + "stderr-"
-            );
+            try {
+                stdout = new BoundedProcessOutput(
+                    process.getInputStream(), maxStreamBytes,
+                    spillDirectory, prefix + "stdout-"
+                );
+                stderr = new BoundedProcessOutput(
+                    process.getErrorStream(), maxStreamBytes,
+                    spillDirectory, prefix + "stderr-"
+                );
+            } catch (IOException preservationError) {
+                if (stdout != null) stdout.discard();
+                destroy(process);
+                throw new ToolFailureException(
+                    ToolErrorInfo.builder(
+                        "OUTPUT_PRESERVATION_FAILED",
+                        "Cannot prepare complete Bash output capture: "
+                            + preservationError.getMessage()
+                    ).retryable(false)
+                        .recoveryHint(
+                            "Check the configured tool output directory and its permissions."
+                        )
+                        .detail("outputDirectory", spillDirectory)
+                        .build(),
+                    preservationError
+                );
+            }
             stdoutThread = daemon("agent-bash-stdout", stdout);
             stderrThread = daemon("agent-bash-stderr", stderr);
             stdoutThread.start();
@@ -156,14 +175,51 @@ final class BashTool extends AbstractAsyncTool<BashTool.Input> {
                 destroy(process);
                 process.waitFor(1000L, TimeUnit.MILLISECONDS);
             }
-            join(stdoutThread, stdout);
-            join(stderrThread, stderr);
-            if (stdout.getError() != null) {
-                throw stdout.getError();
+            boolean stdoutDrained = join(stdoutThread, stdout);
+            boolean stderrDrained = join(stderrThread, stderr);
+            if (!stdoutDrained || !stderrDrained) {
+                String failedStream = !stdoutDrained ? "stdout" : "stderr";
+                discard(stdout, stderr);
+                throw new ToolFailureException(
+                    ToolErrorInfo.builder(
+                        "OUTPUT_CAPTURE_FAILED",
+                        "Bash " + failedStream + " did not finish draining"
+                    ).retryable(false)
+                        .recoveryHint(
+                            "Ensure the command and its child processes close inherited output streams."
+                        )
+                        .detail("stream", failedStream)
+                        .build()
+                );
             }
-            if (stderr.getError() != null) {
-                throw stderr.getError();
+            IOException captureError = stdout.getError() != null
+                ? stdout.getError() : stderr.getError();
+            if (captureError != null) {
+                String failedStream = stdout.getError() != null
+                    ? "stdout" : "stderr";
+                discard(stdout, stderr);
+                throw new ToolFailureException(
+                    ToolErrorInfo.builder(
+                        "OUTPUT_CAPTURE_FAILED",
+                        "Cannot capture Bash " + failedStream + ": "
+                            + captureError.getMessage()
+                    ).retryable(false)
+                        .recoveryHint(
+                            "Check available disk space and tool output directory permissions."
+                        )
+                        .detail("stream", failedStream)
+                        .detail("outputDirectory", spillDirectory)
+                        .build(),
+                    captureError
+                );
             }
+            if (result.isCancelled()) {
+                discard(stdout, stderr);
+                return;
+            }
+            boolean retainStreams = stdout.isTruncated() || stderr.isTruncated();
+            stdout.finalizeRetention(retainStreams);
+            stderr.finalizeRetention(retainStreams);
             int exitCode = completed ? process.exitValue() : safeExitValue(process);
             String rendered = render(stdout, stderr, completed, timeout, exitCode);
             ToolResult toolResult;
@@ -200,10 +256,13 @@ final class BashTool extends AbstractAsyncTool<BashTool.Input> {
                 toolResult = ToolResult.success(rendered);
             }
             toolResult = addMetadata(toolResult, stdout, stderr, completed, exitCode, workdir);
-            result.complete(toolResult);
+            if (!result.complete(toolResult)) {
+                discard(stdout, stderr);
+            }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             destroy(process);
+            discard(stdout, stderr);
             result.completeExceptionally(new ToolFailureException(
                 ToolErrorInfo.builder(
                     "COMMAND_INTERRUPTED", "Command execution was interrupted"
@@ -214,6 +273,7 @@ final class BashTool extends AbstractAsyncTool<BashTool.Input> {
             ));
         } catch (IOException error) {
             destroy(process);
+            discard(stdout, stderr);
             result.completeExceptionally(new ToolFailureException(
                 ToolErrorInfo.builder(
                     "COMMAND_START_FAILED",
@@ -229,6 +289,7 @@ final class BashTool extends AbstractAsyncTool<BashTool.Input> {
             ));
         } catch (Throwable error) {
             destroy(process);
+            discard(stdout, stderr);
             result.completeExceptionally(error);
         } finally {
             active.compareAndSet(process, null);
@@ -250,14 +311,22 @@ final class BashTool extends AbstractAsyncTool<BashTool.Input> {
             .withMetadata("stdoutTruncated", stdout.isTruncated())
             .withMetadata("stderrTruncated", stderr.isTruncated());
         if (stdout.retainedSpillPath() != null) {
+            String fullOutput = stdout.retainedSpillPath();
             enriched = enriched.withMetadata(
-                "stdoutSpillPath", stdout.retainedSpillPath()
-            );
+                "stdoutSpillPath", fullOutput
+            ).withOutputReference(ToolOutputReference.temporaryFile(
+                java.nio.file.Paths.get(fullOutput),
+                "complete stdout; read_file offset/limit"
+            ));
         }
         if (stderr.retainedSpillPath() != null) {
+            String fullOutput = stderr.retainedSpillPath();
             enriched = enriched.withMetadata(
-                "stderrSpillPath", stderr.retainedSpillPath()
-            );
+                "stderrSpillPath", fullOutput
+            ).withOutputReference(ToolOutputReference.temporaryFile(
+                java.nio.file.Paths.get(fullOutput),
+                "complete stderr; read_file offset/limit"
+            ));
         }
         return enriched;
     }
@@ -315,13 +384,15 @@ final class BashTool extends AbstractAsyncTool<BashTool.Input> {
         return thread;
     }
 
-    private static void join(Thread thread,
-                             BoundedProcessOutput output) throws InterruptedException {
+    private static boolean join(Thread thread,
+                                BoundedProcessOutput output)
+            throws InterruptedException {
         thread.join(2000L);
         if (thread.isAlive()) {
             output.closeInput();
             thread.join(500L);
         }
+        return !thread.isAlive();
     }
 
     private static int safeExitValue(Process process) {
@@ -339,5 +410,11 @@ final class BashTool extends AbstractAsyncTool<BashTool.Input> {
         } catch (Throwable ignored) {
             // Best effort on Java 8; process-tree isolation belongs to a sandbox runtime.
         }
+    }
+
+    private static void discard(BoundedProcessOutput stdout,
+                                BoundedProcessOutput stderr) {
+        if (stdout != null) stdout.discard();
+        if (stderr != null) stderr.discard();
     }
 }

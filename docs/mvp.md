@@ -23,6 +23,8 @@
 - Lightweight ordered parallel-Agent composition.
 - Workspace-scoped `read_file`, `write_file`, `edit`, `glob`, and opt-in
   `bash` Tools.
+- Recoverable oversized Tool output through OS-temp snapshots and source
+  references, without recursive spill copies.
 - Runnable examples and scripted-model unit tests.
 
 ## Deliberately excluded

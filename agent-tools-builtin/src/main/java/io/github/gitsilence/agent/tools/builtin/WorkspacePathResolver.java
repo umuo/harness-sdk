@@ -14,8 +14,11 @@ final class WorkspacePathResolver {
 
     private final Path root;
     private final boolean allowOutsideWorkspace;
+    private final Path readableOutputRoot;
 
-    WorkspacePathResolver(Path root, boolean allowOutsideWorkspace) {
+    WorkspacePathResolver(Path root,
+                          boolean allowOutsideWorkspace,
+                          Path readableOutputRoot) {
         Objects.requireNonNull(root, "root");
         try {
             Path absolute = root.toAbsolutePath().normalize();
@@ -31,9 +34,19 @@ final class WorkspacePathResolver {
             );
         }
         this.allowOutsideWorkspace = allowOutsideWorkspace;
+        this.readableOutputRoot = readableOutputRoot == null
+            ? null : readableOutputRoot.toAbsolutePath().normalize();
     }
 
     Path resolve(String input) {
+        return resolve(input, false);
+    }
+
+    Path resolveReadable(String input) {
+        return resolve(input, true);
+    }
+
+    private Path resolve(String input, boolean includeOutputRoot) {
         if (input == null || input.trim().isEmpty()) {
             throw failure(
                 "INVALID_PATH", "file_path must be a non-empty string",
@@ -59,7 +72,9 @@ final class WorkspacePathResolver {
             }
             Path realExisting = existing.toRealPath();
             Path resolved = realExisting.resolve(existing.relativize(candidate)).normalize();
-            if (!allowOutsideWorkspace && !resolved.startsWith(root)) {
+            if (!allowOutsideWorkspace
+                    && !resolved.startsWith(root)
+                    && !(includeOutputRoot && isReadableOutput(resolved))) {
                 throw outside(resolved);
             }
             return resolved;
@@ -75,6 +90,16 @@ final class WorkspacePathResolver {
                 error
             );
         }
+    }
+
+    private boolean isReadableOutput(Path path) throws IOException {
+        if (readableOutputRoot == null) {
+            return false;
+        }
+        Path rootPath = Files.exists(readableOutputRoot)
+            ? readableOutputRoot.toRealPath()
+            : readableOutputRoot;
+        return path.startsWith(rootPath);
     }
 
     Path resolveDirectory(String input) {
