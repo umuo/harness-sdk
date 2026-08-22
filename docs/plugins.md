@@ -46,9 +46,10 @@ streaming and the Turn uses `runStreamingAsync`. A Step without tool calls
 still emits `STEP_COMPLETED`. Every Turn has exactly one terminal Turn event.
 
 Events have a monotonically increasing per-Turn sequence, timestamp, Turn ID,
-Agent name and Step number. Payloads are type-specific. Terminal events carry
-an immutable State snapshot. `getRunId()` remains a compatibility alias for
-`getTurnId()`.
+Agent name and Step number. Payloads are type-specific. `TURN_STARTED` and
+terminal events carry an immutable State snapshot, allowing observers to read
+correlation metadata without accessing mutable State. `getRunId()` remains a
+compatibility alias for `getTurnId()`.
 
 `MODEL_STARTED` and `TOOL_STARTED` describe the request emitted by the Agent
 Loop before interceptor transformations. The completed tool record exposes
@@ -103,6 +104,10 @@ Plugin A after
 An Agent and its extension lists are immutable after `build()`. The first
 version intentionally has no hot registration, unload ordering, dependency
 resolution or plugin configuration DSL.
+
+For ready-to-use Turn/Step/Model/Tool traces and cumulative metrics, register
+the built-in `AgentObservability` Plugin instead of rebuilding event pairing in
+each application. See [Agent observability](observability.md).
 
 ## Rewrite or short-circuit a call
 

@@ -5,8 +5,8 @@ agent loop.
 
 ## Modules
 
-- `agent-core`: provider-neutral agent, state, tool, plugin, skill and todo
-  runtime.
+- `agent-core`: provider-neutral agent, state, tool, plugin, observability,
+  skill and todo runtime.
 - `agent-model-http`: Java 8 HTTP/SSE runtime plus OpenAI-compatible Chat
   Completions, OpenAI Responses API and Anthropic Messages adapters.
 - `agent-mcp`: Java 8 MCP 2026-07-28/legacy client, stdio transport, Tool
@@ -34,6 +34,7 @@ mvn clean verify
 - [Model providers and streaming](docs/model-providers.md)
 - [MCP client and Tool integration](docs/mcp.md)
 - [Lifecycle events and plugins](docs/plugins.md)
+- [Agent observability](docs/observability.md)
 - [Tool results, preservation and errors](docs/tool-results.md)
 - [Built-in workspace tools](docs/builtin-tools.md)
 - [Multi-Agent composition](docs/multi-agent.md)

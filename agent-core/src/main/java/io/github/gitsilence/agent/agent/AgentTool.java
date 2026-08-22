@@ -6,6 +6,7 @@ import io.github.gitsilence.agent.tool.ToolContext;
 import io.github.gitsilence.agent.tool.ToolDefinition;
 import io.github.gitsilence.agent.tool.ToolResult;
 
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 public final class AgentTool implements Tool {
@@ -37,14 +38,22 @@ public final class AgentTool implements Tool {
     @Override
     public CompletableFuture<ToolResult> execute(ToolArguments arguments,
                                                  ToolContext context) {
-        AgentRequest request = AgentRequest.builder()
+        AgentRequest.Builder request = AgentRequest.builder()
             .input(arguments.requireString("task"))
             .metadata("parentRunId", context.getRunId())
             .metadata("parentTurnId", context.getTurnId())
-            .build();
+            .metadata("parentToolCallId", context.getToolCallId());
+        Map<String, Object> parentMetadata = context.getMetadata();
+        Object traceId = parentMetadata.get("traceId");
+        if (traceId instanceof String
+                && !((String) traceId).trim().isEmpty()) {
+            request.metadata("traceId", traceId);
+        }
 
         CompletableFuture<AgentResult> child = context.getRunner()
-            .runChildAsync(delegate, request, context.getInvocationPath());
+            .runChildAsync(
+                delegate, request.build(), context.getInvocationPath()
+            );
         CompletableFuture<ToolResult> result = new CompletableFuture<ToolResult>();
         child.whenComplete((agentResult, error) -> {
             if (result.isCancelled()) {

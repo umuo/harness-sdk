@@ -30,6 +30,8 @@ AgentRunner -- creates --> AgentState
 - `AgentLoop` is a fixed state machine with model and tool phases.
 - `AgentPlugin` groups ordered lifecycle observers and model/tool
   interceptors. Plugins are frozen when the Agent is built.
+- `AgentObservability` reduces lifecycle events into hierarchical Turn, Step,
+  Model and Tool spans plus cumulative process-local metrics.
 - `AgentState` is mutable but owned by one invocation. Callers receive an
   immutable `AgentStateSnapshot`.
 - `ChatModel` is the provider-neutral complete-response contract.
@@ -215,8 +217,8 @@ TURN_COMPLETED | TURN_STOPPED | TURN_FAILED | TURN_CANCELLED
 ```
 
 Every event carries a per-Turn sequence number, Turn ID, Agent name and current
-Step. Terminal events also carry an immutable State snapshot. `getRunId()` is
-retained as an alias for `getTurnId()`.
+Step. Start and terminal Turn events also carry an immutable State snapshot.
+`getRunId()` is retained as an alias for `getTurnId()`.
 
 Lifecycle events are facts for tracing, metrics and audit. Listener failures
 are isolated so an observer cannot change execution semantics. Operations that
@@ -224,6 +226,24 @@ must wrap, rewrite, reject or short-circuit a model/tool call use ordered
 `ModelInterceptor` and `ToolInterceptor` chains supplied by `AgentPlugin`.
 Interceptors receive immutable invocation data and State snapshots rather than
 the live mutable AgentState.
+
+The built-in `AgentObservability` Plugin assembles those facts into immutable,
+exporter-neutral trace segments:
+
+```text
+Trace ID
+  Turn span
+    Step span
+      Model span
+      Tool span *
+```
+
+It also aggregates status, call, Token, error and duration counters. Content
+capture is bounded and disabled by default. Agent-as-Tool propagates the trace
+ID and links the child Turn span to the parent Tool span while retaining
+separate State ownership. No OpenTelemetry, metrics backend or logging API is
+required by Core; integrations implement the narrow exporter boundary. See
+[Agent observability](observability.md).
 
 Cancelling the returned Agent future propagates to the active model stream or
 model future, through interceptor futures, and then to the active sequential or

@@ -21,6 +21,8 @@
 - Agent lifecycle and model-delta events through `runStreamingAsync`.
 - Build-time Plugins with lifecycle observers and ordered model/tool
   interceptors.
+- Exporter-neutral Turn/Step/Model/Tool traces, cumulative execution metrics,
+  bounded opt-in content capture, and parent/SubAgent trace correlation.
 - Cancellation propagation from Agent execution to model and tool operations.
 - Lightweight ordered parallel-Agent composition.
 - Workspace-scoped `read_file`, `write_file`, `edit`, `glob`, and opt-in
@@ -50,7 +52,7 @@
 ## Likely follow-ups
 
 1. More Provider modules.
-2. Tracing integrations built as Agent Plugins.
+2. OpenTelemetry, Micrometer, and structured-log exporter adapters.
 3. Explicit Handoff control signals plus an AgentRegistry.
 4. Optional persistence implemented outside AgentState.
 

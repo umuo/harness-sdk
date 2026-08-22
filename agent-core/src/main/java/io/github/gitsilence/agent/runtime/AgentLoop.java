@@ -69,7 +69,7 @@ final class AgentLoop {
         emit(AgentEvent.lifecycle(
             nextSequence(), AgentEventType.TURN_STARTED,
             state.getRunId(), agent.descriptor().getName(), state.getStep(),
-            null, null
+            state.snapshot(), null
         ));
         final CompletableFuture<AgentResult> workflow;
         try {

@@ -122,6 +122,7 @@ public final class AgentRunner implements AutoCloseable {
             new LinkedHashMap<String, Object>(request.getMetadata());
         metadata.put("runId", runId);
         metadata.put("turnId", runId);
+        metadata.put("traceId", traceId(request, runId));
         metadata.put("agentName", agent.descriptor().getName());
         metadata.put("invocationPath", path.getAgentNames());
 
@@ -135,6 +136,15 @@ public final class AgentRunner implements AutoCloseable {
         return new AgentLoop(
             agent, state, this, path, listener, streamModel
         ).run();
+    }
+
+    private static String traceId(AgentRequest request, String fallback) {
+        Object configured = request.getMetadata().get("traceId");
+        if (configured instanceof String
+                && !((String) configured).trim().isEmpty()) {
+            return (String) configured;
+        }
+        return fallback;
     }
 
     public ExecutorService getExecutor() {
