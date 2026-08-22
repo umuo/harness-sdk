@@ -1,6 +1,14 @@
 import Link from "next/link";
 import { RefreshControl } from "../components/refresh-control";
 import { StatusBadge } from "../components/status-badge";
+import { currentLocale } from "../lib/current-locale";
+import {
+  formatDuration,
+  formatNumber,
+  formatTimestamp,
+  percentage,
+} from "../lib/format";
+import { dictionary } from "../lib/i18n";
 import { traceStore } from "../lib/trace-store";
 import type { AgentTrace } from "../lib/trace-types";
 
@@ -16,6 +24,9 @@ export default async function Dashboard({
 }: {
   searchParams: SearchParameters;
 }) {
+  const locale = await currentLocale();
+  const copy = dictionary(locale);
+  const dashboard = copy.dashboard;
   const parameters = await searchParams;
   const allTraces = await traceStore.list({ limit: 1_000 });
   const status = parameters.status?.trim() ?? "";
@@ -27,38 +38,42 @@ export default async function Dashboard({
     <>
       <section className="hero">
         <div>
-          <p className="eyebrow">Runtime overview</p>
-          <h1>Every turn, visible.</h1>
-          <p className="hero-copy">
-            Follow model calls, tool execution, latency, errors, and token use
-            across your Agent hierarchy.
-          </p>
+          <p className="eyebrow">{dashboard.overview}</p>
+          <h1>{dashboard.title}</h1>
+          <p className="hero-copy">{dashboard.description}</p>
         </div>
-        <RefreshControl />
+        <RefreshControl
+          automaticLabel={copy.refresh.automatic}
+          refreshLabel={copy.refresh.button}
+        />
       </section>
 
-      <section className="metric-grid" aria-label="Trace summary">
-        <Metric label="Turns" value={formatNumber(metrics.turns)} hint="retained" />
+      <section className="metric-grid" aria-label={dashboard.summaryLabel}>
         <Metric
-          label="Success rate"
+          label={dashboard.metrics.turns}
+          value={formatNumber(metrics.turns, locale)}
+          hint={dashboard.metrics.retained}
+        />
+        <Metric
+          label={dashboard.metrics.successRate}
           value={percentage(metrics.successRate)}
-          hint={`${metrics.failed} non-completed`}
+          hint={`${metrics.failed} ${dashboard.metrics.nonCompleted}`}
           tone={metrics.failed > 0 ? "warning" : "good"}
         />
         <Metric
-          label="P95 latency"
+          label={dashboard.metrics.p95Latency}
           value={formatDuration(metrics.p95Nanos)}
-          hint="turn duration"
+          hint={dashboard.metrics.turnDuration}
         />
         <Metric
-          label="Tokens"
-          value={formatNumber(metrics.tokens)}
-          hint="input + output"
+          label={dashboard.metrics.tokens}
+          value={formatNumber(metrics.tokens, locale)}
+          hint={dashboard.metrics.inputOutput}
         />
         <Metric
-          label="Tool errors"
-          value={formatNumber(metrics.toolErrors)}
-          hint={`${formatNumber(metrics.toolCalls)} calls`}
+          label={dashboard.metrics.toolErrors}
+          value={formatNumber(metrics.toolErrors, locale)}
+          hint={`${formatNumber(metrics.toolCalls, locale)} ${dashboard.metrics.calls}`}
           tone={metrics.toolErrors > 0 ? "danger" : "good"}
         />
       </section>
@@ -66,42 +81,54 @@ export default async function Dashboard({
       <section className="panel trace-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Recent activity</p>
-            <h2>Agent turns</h2>
+            <p className="eyebrow">{dashboard.recent}</p>
+            <h2>{dashboard.turnsTitle}</h2>
           </div>
           <form className="filters" method="get">
             <input
-              aria-label="Filter by agent"
+              aria-label={dashboard.filters.agentLabel}
               name="agent"
               defaultValue={agent}
-              placeholder="Agent name"
+              placeholder={dashboard.filters.agentPlaceholder}
             />
-            <select aria-label="Filter by status" name="status" defaultValue={status}>
-              <option value="">All statuses</option>
-              <option value="COMPLETED">Completed</option>
-              <option value="FAILED">Failed</option>
-              <option value="STOPPED">Stopped</option>
-              <option value="CANCELLED">Cancelled</option>
+            <select
+              aria-label={dashboard.filters.statusLabel}
+              name="status"
+              defaultValue={status}
+            >
+              <option value="">{dashboard.filters.allStatuses}</option>
+              <option value="COMPLETED">{copy.status.COMPLETED}</option>
+              <option value="FAILED">{copy.status.FAILED}</option>
+              <option value="STOPPED">{copy.status.STOPPED}</option>
+              <option value="CANCELLED">{copy.status.CANCELLED}</option>
             </select>
-            <button type="submit">Apply</button>
-            {(status || agent) && <Link href="/">Clear</Link>}
+            <button type="submit">{dashboard.filters.apply}</button>
+            {(status || agent) && (
+              <Link href="/">{dashboard.filters.clear}</Link>
+            )}
           </form>
         </div>
 
         {traces.length === 0 ? (
-          <EmptyState hasAny={allTraces.length > 0} />
+          <EmptyState
+            hasAny={allTraces.length > 0}
+            noMatch={dashboard.empty.noMatch}
+            waiting={dashboard.empty.waiting}
+            adjust={dashboard.empty.adjust}
+            connect={dashboard.empty.connect}
+          />
         ) : (
           <div className="table-scroll">
             <table>
               <thead>
                 <tr>
-                  <th>Agent</th>
-                  <th>Status</th>
-                  <th>Started</th>
-                  <th>Latency</th>
-                  <th>Steps</th>
-                  <th>Model / Tool</th>
-                  <th>Tokens</th>
+                  <th>{dashboard.table.agent}</th>
+                  <th>{dashboard.table.status}</th>
+                  <th>{dashboard.table.started}</th>
+                  <th>{dashboard.table.latency}</th>
+                  <th>{dashboard.table.steps}</th>
+                  <th>{dashboard.table.modelTool}</th>
+                  <th>{dashboard.table.tokens}</th>
                   <th />
                 </tr>
               </thead>
@@ -119,21 +146,27 @@ export default async function Dashboard({
                         </span>
                       </div>
                     </td>
-                    <td><StatusBadge status={trace.status} /></td>
-                    <td className="muted">{formatTimestamp(trace.startedAt)}</td>
+                    <td>
+                      <StatusBadge status={trace.status} locale={locale} />
+                    </td>
+                    <td className="muted">
+                      {formatTimestamp(trace.startedAt, locale)}
+                    </td>
                     <td>{formatDuration(trace.durationNanos)}</td>
                     <td>{trace.stepCount}</td>
                     <td>
                       {trace.modelCallCount} <span className="slash">/</span>{" "}
                       {trace.toolCallCount}
                       {trace.toolErrorCount > 0 && (
-                        <span className="error-count"> +{trace.toolErrorCount} error</span>
+                        <span className="error-count">
+                          {" "}+{trace.toolErrorCount} {dashboard.table.error}
+                        </span>
                       )}
                     </td>
-                    <td>{formatNumber(trace.usage.totalTokens)}</td>
+                    <td>{formatNumber(trace.usage.totalTokens, locale)}</td>
                     <td>
                       <Link className="inspect-link" href={`/traces/${encodeURIComponent(trace.turnId)}`}>
-                        Inspect →
+                        {dashboard.table.inspect}
                       </Link>
                     </td>
                   </tr>
@@ -167,16 +200,24 @@ function Metric({
   );
 }
 
-function EmptyState({ hasAny }: { hasAny: boolean }) {
+function EmptyState({
+  hasAny,
+  noMatch,
+  waiting,
+  adjust,
+  connect,
+}: {
+  hasAny: boolean;
+  noMatch: string;
+  waiting: string;
+  adjust: string;
+  connect: string;
+}) {
   return (
     <div className="empty-state">
       <div className="empty-icon">⌁</div>
-      <h3>{hasAny ? "No turns match these filters" : "Waiting for the first turn"}</h3>
-      <p>
-        {hasAny
-          ? "Adjust the agent or status filter to reveal more traces."
-          : "Point the Java SDK platform exporter at this service to begin ingesting traces."}
-      </p>
+      <h3>{hasAny ? noMatch : waiting}</h3>
+      <p>{hasAny ? adjust : connect}</p>
       {!hasAny && (
         <pre>{`AgentObservability observability = AgentObservability.platform(
     "http://localhost:3000/api/traces"
@@ -213,31 +254,6 @@ function summarize(traces: AgentTrace[]) {
   };
 }
 
-export function formatDuration(nanos: number): string {
-  const millis = nanos / 1_000_000;
-  if (millis < 1) return `${Math.round(nanos / 1_000)}µs`;
-  if (millis < 1_000) return `${millis.toFixed(millis < 10 ? 1 : 0)}ms`;
-  return `${(millis / 1_000).toFixed(2)}s`;
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
-}
-
-function percentage(value: number): string {
-  return `${(value * 100).toFixed(value === 1 ? 0 : 1)}%`;
-}
-
 function shortId(value: string): string {
   return value.length > 15 ? `${value.slice(0, 7)}…${value.slice(-5)}` : value;
-}
-
-function formatTimestamp(value: string): string {
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(value));
 }

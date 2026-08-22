@@ -1,9 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { StatusBadge } from "../../../components/status-badge";
+import { currentLocale } from "../../../lib/current-locale";
+import {
+  formatDateTime,
+  formatDuration,
+  formatNumber,
+} from "../../../lib/format";
+import {
+  dictionary,
+  kindLabel,
+  statusLabel,
+  type Locale,
+} from "../../../lib/i18n";
 import { traceStore } from "../../../lib/trace-store";
 import type { TraceAttributes, TraceSpan } from "../../../lib/trace-types";
-import { formatDuration } from "../../page";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +23,8 @@ export default async function TraceDetail({
 }: {
   params: Promise<{ turnId: string }>;
 }) {
+  const locale = await currentLocale();
+  const copy = dictionary(locale).detail;
   const { turnId } = await params;
   const trace = await traceStore.get(turnId);
   if (!trace) notFound();
@@ -25,7 +38,9 @@ export default async function TraceDetail({
   return (
     <>
       <nav className="breadcrumbs">
-        <Link href="/">Turns</Link><span>/</span><strong>{trace.agentName}</strong>
+        <Link href="/">{copy.turns}</Link>
+        <span>/</span>
+        <strong>{trace.agentName}</strong>
       </nav>
 
       <section className="detail-header">
@@ -35,61 +50,72 @@ export default async function TraceDetail({
               {trace.agentName.slice(0, 1).toUpperCase()}
             </span>
             <div>
-              <p className="eyebrow">Agent turn</p>
+              <p className="eyebrow">{copy.agentTurn}</p>
               <h1>{trace.agentName}</h1>
             </div>
           </div>
           <div className="identifier-row">
             <code>{trace.turnId}</code>
-            <StatusBadge status={trace.status} />
+            <StatusBadge status={trace.status} locale={locale} />
           </div>
         </div>
         <div className="detail-duration">
-          <span>Total duration</span>
+          <span>{copy.totalDuration}</span>
           <strong>{formatDuration(trace.durationNanos)}</strong>
-          <small>{new Date(trace.startedAt).toLocaleString()}</small>
+          <small>{formatDateTime(trace.startedAt, locale)}</small>
         </div>
       </section>
 
       {trace.errorMessage && (
         <section className="error-banner">
-          <strong>{trace.errorType || "Turn error"}</strong>
+          <strong>{trace.errorType || copy.turnError}</strong>
           <p>{trace.errorMessage}</p>
         </section>
       )}
 
       <section className="detail-grid">
         <article className="panel stat-strip">
-          <DetailStat label="Steps" value={trace.stepCount} />
-          <DetailStat label="Model calls" value={trace.modelCallCount} />
-          <DetailStat label="Tool calls" value={trace.toolCallCount} />
-          <DetailStat label="Tool errors" value={trace.toolErrorCount} danger={trace.toolErrorCount > 0} />
-          <DetailStat label="Input tokens" value={trace.usage.inputTokens} />
-          <DetailStat label="Output tokens" value={trace.usage.outputTokens} />
+          <DetailStat label={copy.stats.steps} value={trace.stepCount} locale={locale} />
+          <DetailStat label={copy.stats.modelCalls} value={trace.modelCallCount} locale={locale} />
+          <DetailStat label={copy.stats.toolCalls} value={trace.toolCallCount} locale={locale} />
+          <DetailStat
+            label={copy.stats.toolErrors}
+            value={trace.toolErrorCount}
+            locale={locale}
+            danger={trace.toolErrorCount > 0}
+          />
+          <DetailStat label={copy.stats.inputTokens} value={trace.usage.inputTokens} locale={locale} />
+          <DetailStat label={copy.stats.outputTokens} value={trace.usage.outputTokens} locale={locale} />
         </article>
 
         <article className="panel metadata-card">
           <div className="panel-heading compact">
-            <div><p className="eyebrow">Context</p><h2>Trace metadata</h2></div>
+            <div>
+              <p className="eyebrow">{copy.context}</p>
+              <h2>{copy.traceMetadata}</h2>
+            </div>
           </div>
-          <MetadataRow label="Trace ID" value={trace.traceId} />
-          <MetadataRow label="Parent turn" value={trace.parentTurnId || "Root turn"} />
-          <MetadataRow label="Parent span" value={trace.parentSpanId || "—"} />
-          <MetadataRow label="Stream events" value={String(trace.modelStreamEventCount)} />
-          <Attributes value={trace.attributes} empty="No resource attributes" />
+          <MetadataRow label={copy.traceId} value={trace.traceId} />
+          <MetadataRow
+            label={copy.parentTurn}
+            value={trace.parentTurnId || copy.rootTurn}
+          />
+          <MetadataRow label={copy.parentSpan} value={trace.parentSpanId || "—"} />
+          <MetadataRow label={copy.streamEvents} value={String(trace.modelStreamEventCount)} />
+          <Attributes value={trace.attributes} empty={copy.noResourceAttributes} />
         </article>
       </section>
 
       <section className="panel waterfall-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Execution timeline</p>
-            <h2>Turn → step → model / tool</h2>
+            <p className="eyebrow">{copy.timeline}</p>
+            <h2>{copy.timelineTitle}</h2>
           </div>
           <div className="legend">
-            <span className="legend-step">Step</span>
-            <span className="legend-model">Model</span>
-            <span className="legend-tool">Tool</span>
+            <span className="legend-step">{kindLabel("STEP", locale)}</span>
+            <span className="legend-model">{kindLabel("MODEL", locale)}</span>
+            <span className="legend-tool">{kindLabel("TOOL", locale)}</span>
           </div>
         </div>
         <div className="timeline-scale">
@@ -108,7 +134,10 @@ export default async function TraceDetail({
                 <summary>
                   <div className="span-name">
                     <span className={`kind-dot kind-${span.kind.toLowerCase()}`} />
-                    <span><strong>{span.name}</strong><small>{span.kind}</small></span>
+                    <span>
+                      <strong>{span.name}</strong>
+                      <small>{kindLabel(span.kind, locale)}</small>
+                    </span>
                   </div>
                   <div className="span-track">
                     <span
@@ -118,7 +147,17 @@ export default async function TraceDetail({
                   </div>
                   <code>{formatDuration(span.durationNanos)}</code>
                 </summary>
-                <SpanDetails span={span} />
+                <SpanDetails
+                  span={span}
+                  locale={locale}
+                  labels={{
+                    spanId: copy.spanId,
+                    parent: copy.parent,
+                    status: copy.status,
+                    error: copy.error,
+                    noCapturedAttributes: copy.noCapturedAttributes,
+                  }}
+                />
               </details>
             );
           })}
@@ -128,22 +167,56 @@ export default async function TraceDetail({
   );
 }
 
-function DetailStat({ label, value, danger = false }: { label: string; value: number; danger?: boolean }) {
-  return <div className={danger ? "detail-stat danger" : "detail-stat"}><span>{label}</span><strong>{value.toLocaleString()}</strong></div>;
+function DetailStat({
+  label,
+  value,
+  locale,
+  danger = false,
+}: {
+  label: string;
+  value: number;
+  locale: Locale;
+  danger?: boolean;
+}) {
+  return (
+    <div className={danger ? "detail-stat danger" : "detail-stat"}>
+      <span>{label}</span>
+      <strong>{formatNumber(value, locale)}</strong>
+    </div>
+  );
 }
 
 function MetadataRow({ label, value }: { label: string; value: string }) {
   return <div className="metadata-row"><span>{label}</span><code title={value}>{value}</code></div>;
 }
 
-function SpanDetails({ span }: { span: TraceSpan }) {
+function SpanDetails({
+  span,
+  locale,
+  labels,
+}: {
+  span: TraceSpan;
+  locale: Locale;
+  labels: {
+    spanId: string;
+    parent: string;
+    status: string;
+    error: string;
+    noCapturedAttributes: string;
+  };
+}) {
   return (
     <div className="span-details">
-      <div><span>Span ID</span><code>{span.spanId}</code></div>
-      <div><span>Parent</span><code>{span.parentSpanId || "—"}</code></div>
-      <div><span>Status</span><code>{span.status}</code></div>
-      {span.errorMessage && <div className="span-error-copy"><span>{span.errorType || "Error"}</span><code>{span.errorMessage}</code></div>}
-      <Attributes value={span.attributes} empty="No captured attributes" />
+      <div><span>{labels.spanId}</span><code>{span.spanId}</code></div>
+      <div><span>{labels.parent}</span><code>{span.parentSpanId || "—"}</code></div>
+      <div><span>{labels.status}</span><code>{statusLabel(span.status, locale)}</code></div>
+      {span.errorMessage && (
+        <div className="span-error-copy">
+          <span>{span.errorType || labels.error}</span>
+          <code>{span.errorMessage}</code>
+        </div>
+      )}
+      <Attributes value={span.attributes} empty={labels.noCapturedAttributes} />
     </div>
   );
 }

@@ -15,6 +15,8 @@ The first version includes:
 - `GET /api/health` readiness information;
 - an overview with Turn count, success rate, P95 duration, Tokens, Tool errors,
   filtering, and manual/automatic refresh;
+- Chinese and English interfaces with Chinese selected by default and the
+  browser choice persisted locally;
 - a Turn detail page with error context, usage, correlation fields,
   attributes, and a Turn/Step/Model/Tool span waterfall;
 - atomic local-file persistence behind a small `TraceStore` interface.

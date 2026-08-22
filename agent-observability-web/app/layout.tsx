@@ -1,15 +1,25 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LanguageSwitcher } from "../components/language-switcher";
+import { currentLocale } from "../lib/current-locale";
+import { dictionary } from "../lib/i18n";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Agent Observatory",
-  description: "A lightweight trace console for Agent SDK",
+  title: "Agent 可观测性平台",
+  description: "轻量级 Agent SDK Trace 控制台",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const locale = await currentLocale();
+  const copy = dictionary(locale);
+
   return (
-    <html lang="en">
+    <html lang={locale}>
       <body>
         <header className="topbar">
           <Link className="brand" href="/">
@@ -18,11 +28,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </span>
             <span>
               <strong>Agent Observatory</strong>
-              <small>Harness runtime signals</small>
+              <small>{copy.brandSubtitle}</small>
             </span>
           </Link>
-          <div className="live-indicator">
-            <span /> Ingestion online
+          <div className="topbar-actions">
+            <div className="live-indicator">
+              <span /> {copy.ingestionOnline}
+            </div>
+            <LanguageSwitcher locale={locale} label={copy.language} />
           </div>
         </header>
         <main className="shell">{children}</main>

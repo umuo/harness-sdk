@@ -58,8 +58,13 @@ button, input, select { font: inherit; }
 .brand strong { font-size: 14px; letter-spacing: 0.02em; }
 .brand small { color: var(--muted); font-size: 10px; margin-top: 4px; letter-spacing: 0.08em; text-transform: uppercase; }
 
+.topbar-actions { display: flex; align-items: center; gap: 18px; }
 .live-indicator { color: var(--muted); display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .live-indicator span { width: 7px; height: 7px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 14px var(--mint); }
+.language-switcher { display: flex; padding: 3px; gap: 2px; border: 1px solid var(--border); border-radius: 8px; background: rgba(13, 23, 20, 0.8); }
+.language-switcher button { border: 0; border-radius: 5px; background: transparent; color: var(--faint); padding: 5px 8px; cursor: pointer; font-size: 10px; font-weight: 700; }
+.language-switcher button:hover { color: var(--text); }
+.language-switcher button.active { color: var(--mint); background: rgba(114, 229, 172, 0.12); }
 
 .shell { width: min(1420px, calc(100% - 48px)); margin: 0 auto; padding: 56px 0 80px; }
 .hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 34px; }

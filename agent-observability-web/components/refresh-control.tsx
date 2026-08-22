@@ -3,7 +3,13 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function RefreshControl() {
+export function RefreshControl({
+  automaticLabel,
+  refreshLabel,
+}: {
+  automaticLabel: string;
+  refreshLabel: string;
+}) {
   const router = useRouter();
   const [automatic, setAutomatic] = useState(false);
 
@@ -21,10 +27,10 @@ export function RefreshControl() {
           checked={automatic}
           onChange={(event) => setAutomatic(event.target.checked)}
         />
-        <span>Auto 5s</span>
+        <span>{automaticLabel}</span>
       </label>
       <button className="refresh-button" onClick={() => router.refresh()}>
-        Refresh
+        {refreshLabel}
       </button>
     </div>
   );
