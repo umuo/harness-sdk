@@ -120,16 +120,18 @@ inherit the parent's messages, variables, metadata or todos.
 
 ## Todos
 
-Todos are an ordinary built-in Skill:
+Todos are managed by one stateful Tool scoped to the current Turn:
 
 ```java
 Agent agent = Agent.builder()
-    .skill(BuiltInSkills.todos())
+    .tool(TodoTool.create())
     .build();
 ```
 
-It contributes instructions and four tools: `todo_create`, `todo_update`,
-`todo_complete`, and `todo_list`. Todo state is scoped to one Agent run.
+The model calls `todo` with an `action` of `LIST`, `ADD`, `UPDATE`, `COMPLETE`,
+or `CLEAR`. Keeping these operations behind one Tool reduces the model's tool
+selection surface. The resulting Todo state is retained in `AgentState` and is
+included in the immutable result snapshot.
 
 ## Asynchronous execution
 

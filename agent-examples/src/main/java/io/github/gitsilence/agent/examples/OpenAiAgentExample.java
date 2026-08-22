@@ -3,7 +3,7 @@ package io.github.gitsilence.agent.examples;
 import io.github.gitsilence.agent.agent.Agent;
 import io.github.gitsilence.agent.agent.AgentResult;
 import io.github.gitsilence.agent.openai.OpenAiChatModel;
-import io.github.gitsilence.agent.skill.BuiltInSkills;
+import io.github.gitsilence.agent.todo.TodoTool;
 import io.github.gitsilence.agent.tool.annotation.Tool;
 import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
@@ -39,7 +39,7 @@ public final class OpenAiAgentExample {
             )
             .model(model)
             .tool(mathAgent)
-            .skill(BuiltInSkills.todos())
+            .tool(TodoTool.create())
             .maxSteps(10)
             .build();
 

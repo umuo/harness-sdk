@@ -34,6 +34,9 @@ public final class TodoStore {
                                     String title,
                                     String details,
                                     TodoStatus status) {
+        if (title != null && title.trim().isEmpty()) {
+            throw new IllegalArgumentException("Todo title must not be blank");
+        }
         Todo current = require(id);
         Todo updated = current.update(title, details, status);
         todos.put(id, updated);
@@ -50,6 +53,12 @@ public final class TodoStore {
 
     public synchronized List<Todo> list() {
         return Collections.unmodifiableList(new ArrayList<Todo>(todos.values()));
+    }
+
+    public synchronized int clear() {
+        int size = todos.size();
+        todos.clear();
+        return size;
     }
 
     private Todo require(String id) {

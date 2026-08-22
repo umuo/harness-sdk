@@ -11,7 +11,7 @@
 - Sequential and parallel tool batches.
 - Maximum steps, custom termination conditions and error policies.
 - Agent-as-Tool with child-state isolation and recursion guards.
-- Static Skills and the built-in Todo Skill.
+- A stateful, action-based Todo Tool scoped to one Agent Turn.
 - Java 8 JSON HTTP and SSE transport abstraction.
 - Streaming and non-streaming OpenAI-compatible Chat Completions provider.
 - Streaming and non-streaming OpenAI Responses API provider.
