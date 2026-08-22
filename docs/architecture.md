@@ -40,6 +40,9 @@ AgentRunner -- creates --> AgentState
   annotation-scanned methods offer a compact alternative. Raw definitions are
   retained only as an escape hatch.
 - `AgentTool` delegates a tool call to another Agent with a fresh state.
+- `McpToolSet` discovers a remote MCP server's Tools and adapts each one to the
+  same local `Tool` contract. MCP transport and lifecycle code stay outside
+  `agent-core`.
 - `SkillRegistry` holds lightweight metadata for file-backed Agent Skills;
   `skill_load` brings instructions and references into a Turn only on demand.
 
@@ -164,6 +167,32 @@ A new HTTP provider normally implements the four hooks on
 The normalized stream reports response start, text deltas, tool-call start,
 tool-argument deltas and usage. Its completion future returns the same
 `ModelResponse` shape as a non-streaming call.
+
+## MCP boundary
+
+MCP is an optional Tool source, not a second Agent runtime:
+
+```text
+Agent Loop -> ToolRegistry -> Tool
+                              ^
+                              |
+                    McpToolAdapter
+                              |
+                         McpClient
+                              |
+                     stdio MCP server
+```
+
+`agent-mcp` owns MCP initialization, version negotiation, paginated Tool
+discovery, JSON-RPC correlation, timeouts and subprocess shutdown. A required
+namespace converts MCP names to valid, collision-resistant local Tool names.
+The Agent Loop then treats local and MCP Tools identically, so existing Tool
+interceptors, parallel execution, error policy and output limits still apply.
+
+The current official MCP Java SDK requires Java 17, so it cannot be a binary
+dependency of this Java 8 build. `McpClient` is deliberately narrow enough for
+a future Java 17 adapter backed by the official SDK without changing Core or
+Agent APIs. See [MCP client and Tool integration](mcp.md).
 
 ## Agent execution events and plugins
 
