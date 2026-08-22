@@ -21,7 +21,7 @@
         </dependency>
         <dependency>
             <groupId>${project.groupId}</groupId>
-            <artifactId>agent-model-openai</artifactId>
+            <artifactId>agent-model-http</artifactId>
             <version>${project.version}</version>
         </dependency>
     </dependencies>

@@ -11,7 +11,7 @@
     </parent>
 
     <artifactId>agent-model-http</artifactId>
-    <name>Agent SDK HTTP Model Support</name>
+    <name>Agent SDK HTTP Models</name>
 
     <dependencies>
         <dependency>

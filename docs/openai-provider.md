@@ -1,7 +1,7 @@
 # OpenAI Providers
 
-`agent-model-openai` provides two protocols. Both support complete responses,
-SSE streaming, tool definitions and tool calls.
+`agent-model-http` includes two OpenAI protocols. Both support complete
+responses, SSE streaming, tool definitions and tool calls.
 
 ## OpenAI-compatible Chat Completions
 

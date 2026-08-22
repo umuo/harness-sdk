@@ -129,9 +129,10 @@ AbstractHttpChatModel + HttpTransport (agent-model-http)
 ```
 
 `agent-model-http` owns JSON POST, SSE framing, cancellation, timeouts and HTTP
-error handling. Each provider owns only request mapping, response mapping and
-stream-event decoding. A new HTTP provider normally implements the four hooks
-on `AbstractHttpChatModel`; it does not modify `agent-core`.
+error handling, and packages the bundled protocol adapters. Each provider Java
+package owns only request mapping, response mapping and stream-event decoding.
+A new HTTP provider normally implements the four hooks on
+`AbstractHttpChatModel`; it does not modify `agent-core`.
 
 The normalized stream reports response start, text deltas, tool-call start,
 tool-argument deltas and usage. Its completion future returns the same

@@ -8,8 +8,19 @@
 | `OpenAiResponsesChatModel` | OpenAI Responses API | yes | yes | yes |
 | `AnthropicChatModel` | Anthropic Messages API | yes | yes | yes |
 
-Provider code depends on `agent-core` and `agent-model-http`. Core never
-depends on a concrete provider.
+All bundled HTTP providers use one Maven dependency:
+
+```xml
+<dependency>
+  <groupId>io.github.gitsilence</groupId>
+  <artifactId>agent-model-http</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+</dependency>
+```
+
+All bundled adapters live in `agent-model-http`, which depends on `agent-core`.
+Core never depends on HTTP, JSON or a concrete provider. Protocols stay
+separated by Java package rather than one Maven artifact per vendor.
 
 ## Unified contracts
 

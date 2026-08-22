@@ -7,10 +7,8 @@ agent loop.
 
 - `agent-core`: provider-neutral agent, state, tool, plugin, skill and todo
   runtime.
-- `agent-model-http`: Java 8 HTTP/SSE transport and provider extension base.
-- `agent-model-openai`: OpenAI-compatible Chat Completions and OpenAI
-  Responses API adapters.
-- `agent-model-anthropic`: Anthropic Messages API adapter.
+- `agent-model-http`: Java 8 HTTP/SSE runtime plus OpenAI-compatible Chat
+  Completions, OpenAI Responses API and Anthropic Messages adapters.
 - `agent-tools-builtin`: bounded workspace file, glob, edit and opt-in Bash
   tools.
 - `agent-examples`: executable examples.

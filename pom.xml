@@ -15,8 +15,6 @@
     <modules>
         <module>agent-core</module>
         <module>agent-model-http</module>
-        <module>agent-model-openai</module>
-        <module>agent-model-anthropic</module>
         <module>agent-tools-builtin</module>
         <module>agent-examples</module>
     </modules>
