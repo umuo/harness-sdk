@@ -5,11 +5,15 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+/** Describes a method parameter or typed input field exposed to the LLM. */
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.PARAMETER)
+@Target({ElementType.PARAMETER, ElementType.FIELD})
 public @interface ToolParam {
 
     String name() default "";
+
+    /** Shorthand alias for {@link #description()}. */
+    String value() default "";
 
     String description() default "";
 

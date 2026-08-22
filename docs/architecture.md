@@ -35,8 +35,10 @@ AgentRunner -- creates --> AgentState
 - `ChatModel` is the provider-neutral complete-response contract.
   `StreamingChatModel` extends it with normalized streaming events. Providers
   translate messages and tool definitions but never execute tools.
-- `Tool` has one asynchronous execution contract. Synchronous tools are
-  adapters scheduled on the runner worker executor.
+- `Tool` has one asynchronous execution contract. `AbstractTool<I>` and
+  `AbstractAsyncTool<I>` derive schemas from typed input POJOs, while
+  annotation-scanned methods offer a compact alternative. Raw definitions are
+  retained only as an escape hatch.
 - `AgentTool` delegates a tool call to another Agent with a fresh state.
 
 ## State ownership

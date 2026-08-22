@@ -1,11 +1,12 @@
 package io.github.gitsilence.agent.tools.builtin;
 
+import io.github.gitsilence.agent.tool.AbstractTool;
 import io.github.gitsilence.agent.tool.Tool;
-import io.github.gitsilence.agent.tool.ToolDefinition;
+import io.github.gitsilence.agent.tool.ToolContext;
 import io.github.gitsilence.agent.tool.ToolErrorInfo;
 import io.github.gitsilence.agent.tool.ToolFailureException;
 import io.github.gitsilence.agent.tool.ToolResult;
-import io.github.gitsilence.agent.tool.Tools;
+import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -25,42 +26,57 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.PatternSyntaxException;
 
-final class GlobTool {
+final class GlobTool extends AbstractTool<GlobTool.Input> {
 
     private static final Set<String> VCS_DIRECTORIES =
         new java.util.HashSet<String>(java.util.Arrays.asList(
             ".git", ".svn", ".hg", ".bzr", ".jj"
         ));
 
-    private GlobTool() {
-    }
+    private final WorkspacePathResolver paths;
+    private final int maxResults;
+    private final int maxScannedEntries;
 
     static Tool create(WorkspacePathResolver paths,
                        int maxResults,
                        int maxScannedEntries) {
-        ToolDefinition definition = ToolDefinition.builder()
-            .name("glob")
-            .description(
-                "Find files by glob pattern inside the workspace. A pattern "
-                    + "without '/' matches file names at any depth."
-            )
-            .inputSchema("{\"type\":\"object\",\"properties\":{"
-                + "\"pattern\":{\"type\":\"string\"},"
-                + "\"path\":{\"type\":\"string\"}},"
-                + "\"required\":[\"pattern\"],\"additionalProperties\":false}")
-            .build();
-        return Tools.sync(definition, (arguments, context) -> {
-            String pattern = arguments.requireString("pattern");
-            if (pattern.trim().isEmpty()) {
-                throw new IllegalArgumentException("pattern must not be blank");
-            }
-            Path searchRoot = paths.resolveDirectory(
-                arguments.optionalString("path").orElse(".")
-            );
-            return execute(
-                paths, searchRoot, pattern, maxResults, maxScannedEntries
-            );
-        });
+        return new GlobTool(paths, maxResults, maxScannedEntries);
+    }
+
+    private GlobTool(WorkspacePathResolver paths,
+                     int maxResults,
+                     int maxScannedEntries) {
+        super(
+            "glob",
+            "Find files by glob pattern inside the workspace. A pattern "
+                + "without '/' matches file names at any depth.",
+            Input.class
+        );
+        this.paths = paths;
+        this.maxResults = maxResults;
+        this.maxScannedEntries = maxScannedEntries;
+    }
+
+    @Override
+    protected ToolResult execute(Input arguments, ToolContext context) {
+        String pattern = arguments.pattern;
+        if (pattern.trim().isEmpty()) {
+            throw new IllegalArgumentException("pattern must not be blank");
+        }
+        Path searchRoot = paths.resolveDirectory(
+            arguments.path == null ? "." : arguments.path
+        );
+        return execute(
+            paths, searchRoot, pattern, maxResults, maxScannedEntries
+        );
+    }
+
+    static final class Input {
+        @ToolParam(description = "Glob pattern, for example **/*.java")
+        public String pattern;
+
+        @ToolParam(description = "Directory to search, relative to the workspace", required = false)
+        public String path;
     }
 
     private static ToolResult execute(WorkspacePathResolver paths,

@@ -33,6 +33,23 @@ class WorkspaceToolsTest {
     Path temporary;
 
     @Test
+    void typedSchemasKeepStableModelFacingArgumentNames() throws Exception {
+        WorkspaceTools tools = WorkspaceTools.builder(workspace())
+            .enableBash(true)
+            .build();
+
+        String readSchema = tools.getReadFile().definition().getInputSchema();
+        assertTrue(readSchema.contains("\"file_path\""));
+        assertFalse(readSchema.contains("\"filePath\""));
+        assertTrue(readSchema.contains("First 1-based line"));
+        assertTrue(readSchema.contains("\"required\":[\"file_path\"]"));
+
+        String bashSchema = tools.getBash().get().definition().getInputSchema();
+        assertTrue(bashSchema.contains("\"timeout_ms\""));
+        assertFalse(bashSchema.contains("\"timeoutMillis\""));
+    }
+
+    @Test
     void readFileReturnsNumberedPageAndContinuationHint() throws Exception {
         Path root = workspace();
         Files.write(

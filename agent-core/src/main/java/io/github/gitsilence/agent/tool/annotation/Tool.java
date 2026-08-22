@@ -5,11 +5,15 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+/** Marks a public method as an LLM-callable Tool. */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface Tool {
 
     String name() default "";
 
-    String description();
+    /** Shorthand alias for {@link #description()}. */
+    String value() default "";
+
+    String description() default "";
 }

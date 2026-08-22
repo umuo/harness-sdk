@@ -1,5 +1,9 @@
 # Built-in Workspace Tools
 
+The built-ins use the typed `AbstractTool<I>` / `AbstractAsyncTool<I>` APIs;
+their model-facing schemas are generated from input classes rather than kept as
+handwritten JSON strings.
+
 ## Module and setup
 
 The optional `agent-tools-builtin` module contains a coding-oriented Tool suite

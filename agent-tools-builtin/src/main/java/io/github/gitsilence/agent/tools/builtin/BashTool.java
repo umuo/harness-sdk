@@ -1,13 +1,12 @@
 package io.github.gitsilence.agent.tools.builtin;
 
 import io.github.gitsilence.agent.runtime.Futures;
-import io.github.gitsilence.agent.tool.Tool;
-import io.github.gitsilence.agent.tool.ToolArguments;
+import io.github.gitsilence.agent.tool.AbstractAsyncTool;
 import io.github.gitsilence.agent.tool.ToolContext;
-import io.github.gitsilence.agent.tool.ToolDefinition;
 import io.github.gitsilence.agent.tool.ToolErrorInfo;
 import io.github.gitsilence.agent.tool.ToolFailureException;
 import io.github.gitsilence.agent.tool.ToolResult;
+import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -16,9 +15,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-final class BashTool implements Tool {
+final class BashTool extends AbstractAsyncTool<BashTool.Input> {
 
-    private final ToolDefinition definition;
     private final WorkspacePathResolver paths;
     private final String executable;
     private final int defaultTimeoutMillis;
@@ -32,35 +30,24 @@ final class BashTool implements Tool {
              int maxTimeoutMillis,
              int maxStreamBytes,
              Path spillDirectory) {
+        super(
+            "bash",
+            "Run one Bash command in the workspace. No shell state persists "
+                + "between calls; use workdir instead of relying on cd.",
+            Input.class
+        );
         this.paths = paths;
         this.executable = executable;
         this.defaultTimeoutMillis = defaultTimeoutMillis;
         this.maxTimeoutMillis = maxTimeoutMillis;
         this.maxStreamBytes = maxStreamBytes;
         this.spillDirectory = spillDirectory;
-        this.definition = ToolDefinition.builder()
-            .name("bash")
-            .description(
-                "Run one Bash command in the workspace. No shell state persists "
-                    + "between calls; use workdir instead of relying on cd."
-            )
-            .inputSchema("{\"type\":\"object\",\"properties\":{"
-                + "\"command\":{\"type\":\"string\"},"
-                + "\"workdir\":{\"type\":\"string\"},"
-                + "\"timeout_ms\":{\"type\":\"integer\",\"minimum\":1}},"
-                + "\"required\":[\"command\"],\"additionalProperties\":false}")
-            .build();
     }
 
     @Override
-    public ToolDefinition definition() {
-        return definition;
-    }
-
-    @Override
-    public CompletableFuture<ToolResult> execute(ToolArguments arguments,
-                                                  ToolContext context) {
-        final String command = arguments.requireString("command");
+    protected CompletableFuture<ToolResult> executeAsync(Input arguments,
+                                                          ToolContext context) {
+        final String command = arguments.command;
         if (command.trim().isEmpty()) {
             return Futures.failed(new ToolFailureException(
                 ToolErrorInfo.builder(
@@ -70,8 +57,8 @@ final class BashTool implements Tool {
                     .build()
             ));
         }
-        final int timeout = arguments.optionalInt("timeout_ms")
-            .orElse(defaultTimeoutMillis);
+        final int timeout = arguments.timeoutMillis == null
+            ? defaultTimeoutMillis : arguments.timeoutMillis;
         if (timeout < 1 || timeout > maxTimeoutMillis) {
             return Futures.failed(new ToolFailureException(
                 ToolErrorInfo.builder(
@@ -86,7 +73,7 @@ final class BashTool implements Tool {
         final Path workdir;
         try {
             workdir = paths.resolveDirectory(
-                arguments.optionalString("workdir").orElse(".")
+                arguments.workdir == null ? "." : arguments.workdir
             );
         } catch (Throwable error) {
             return Futures.failed(error);
@@ -108,6 +95,24 @@ final class BashTool implements Tool {
             result.completeExceptionally(rejected);
         }
         return result;
+    }
+
+    static final class Input {
+        @ToolParam(description = "Bash command to run")
+        public String command;
+
+        @ToolParam(
+            description = "Working directory relative to the workspace",
+            required = false
+        )
+        public String workdir;
+
+        @ToolParam(
+            name = "timeout_ms",
+            description = "Positive command timeout in milliseconds",
+            required = false
+        )
+        public Integer timeoutMillis;
     }
 
     private void runCommand(String command,

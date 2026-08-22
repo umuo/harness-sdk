@@ -1,17 +1,14 @@
 package io.github.gitsilence.agent.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -19,6 +16,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class AnnotatedTools {
 
@@ -37,8 +36,15 @@ public final class AnnotatedTools {
         Collections.sort(methods, Comparator.comparing(Method::getName));
 
         List<Tool> tools = new ArrayList<Tool>();
+        Set<String> names = new LinkedHashSet<String>();
         for (Method method : methods) {
-            tools.add(new ReflectiveTool(target, method));
+            Tool tool = new ReflectiveTool(target, method);
+            if (!names.add(tool.definition().getName())) {
+                throw new IllegalArgumentException(
+                    "Duplicate annotated tool name: " + tool.definition().getName()
+                );
+            }
+            tools.add(tool);
         }
         return Collections.unmodifiableList(tools);
     }
@@ -48,10 +54,21 @@ public final class AnnotatedTools {
         private final Method method;
         private final ToolDefinition definition;
         private final List<ParameterBinding> bindings;
+        private final Set<String> parameterNames;
 
         private ReflectiveTool(Object target, Method method) {
             if (!Modifier.isPublic(method.getModifiers())) {
                 throw new IllegalArgumentException("Annotated tool method must be public: " + method);
+            }
+            try {
+                if (!method.isAccessible()) {
+                    method.setAccessible(true);
+                }
+            } catch (SecurityException error) {
+                throw new IllegalArgumentException(
+                    "Annotated tool method is not accessible: " + method,
+                    error
+                );
             }
             this.target = target;
             this.method = method;
@@ -59,11 +76,12 @@ public final class AnnotatedTools {
                 method.getAnnotation(io.github.gitsilence.agent.tool.annotation.Tool.class);
             String name = annotation.name().trim().isEmpty()
                 ? method.getName()
-                : annotation.name();
+                : annotation.name().trim();
             this.bindings = bindings(method);
+            this.parameterNames = parameterNames(bindings);
             this.definition = ToolDefinition.builder()
                 .name(name)
-                .description(annotation.description())
+                .description(toolDescription(annotation, method))
                 .inputSchema(schema(bindings))
                 .build();
         }
@@ -77,19 +95,40 @@ public final class AnnotatedTools {
         public CompletableFuture<ToolResult> execute(final ToolArguments arguments,
                                                      final ToolContext context) {
             CompletableFuture<Object> invoked = CompletableFuture.supplyAsync(() -> {
+                arguments.rejectUnknown(parameterNames);
                 Object[] values = new Object[bindings.size()];
                 for (int i = 0; i < bindings.size(); i++) {
                     ParameterBinding binding = bindings.get(i);
+                    if (binding.context) {
+                        values[i] = context;
+                        continue;
+                    }
+                    if (binding.arguments) {
+                        values[i] = arguments;
+                        continue;
+                    }
                     JsonNode value = arguments.node(binding.name);
                     if (value == null || value.isNull()) {
-                        if (binding.required || binding.type.isPrimitive()) {
+                        if (ToolSchemas.rawType(binding.type) == java.util.Optional.class) {
+                            values[i] = java.util.Optional.empty();
+                        } else if (binding.required
+                                || ToolSchemas.rawType(binding.type).isPrimitive()) {
                             throw new IllegalArgumentException(
                                 "Missing required argument: " + binding.name
                             );
+                        } else {
+                            values[i] = null;
                         }
-                        values[i] = null;
                     } else {
-                        values[i] = JsonSupport.MAPPER.convertValue(value, binding.type);
+                        try {
+                            values[i] = ToolInputBinding.convert(value, binding.type);
+                        } catch (IllegalArgumentException error) {
+                            throw new IllegalArgumentException(
+                                "Invalid argument '" + binding.name + "': "
+                                    + error.getMessage(),
+                                error
+                            );
+                        }
                     }
                 }
                 try {
@@ -105,15 +144,85 @@ public final class AnnotatedTools {
                 }
             }, context.getExecutor());
 
-            return invoked.thenCompose(value -> {
-                if (value instanceof CompletableFuture) {
-                    @SuppressWarnings("unchecked")
-                    CompletableFuture<Object> async = (CompletableFuture<Object>) value;
-                    return async.thenApply(AnnotatedTools::toResult);
-                }
-                return CompletableFuture.completedFuture(toResult(value));
-            });
+            return adapt(invoked);
         }
+    }
+
+    private static String toolDescription(
+            io.github.gitsilence.agent.tool.annotation.Tool annotation,
+            Method method) {
+        String value = annotation.value().trim();
+        String description = annotation.description().trim();
+        if (!value.isEmpty() && !description.isEmpty()) {
+            throw new IllegalArgumentException(
+                "@Tool value and description are aliases; use only one: " + method
+            );
+        }
+        String effective = description.isEmpty() ? value : description;
+        if (effective.isEmpty()) {
+            throw new IllegalArgumentException(
+                "Annotated tool must have a description: " + method
+            );
+        }
+        return effective;
+    }
+
+    private static CompletableFuture<ToolResult> adapt(
+            CompletableFuture<Object> invoked) {
+        CompletableFuture<ToolResult> result =
+            new CompletableFuture<ToolResult>();
+        AtomicReference<CompletableFuture<?>> active =
+            new AtomicReference<CompletableFuture<?>>(invoked);
+        invoked.whenComplete((value, invocationError) -> {
+            if (invocationError != null) {
+                result.completeExceptionally(invocationError);
+                return;
+            }
+            if (value instanceof CompletionStage) {
+                @SuppressWarnings("unchecked")
+                CompletionStage<Object> stage = (CompletionStage<Object>) value;
+                CompletableFuture<Object> async = stage.toCompletableFuture();
+                active.set(async);
+                if (result.isCancelled()) {
+                    async.cancel(true);
+                    return;
+                }
+                async.whenComplete((asyncValue, asyncError) -> {
+                    if (asyncError != null) {
+                        result.completeExceptionally(asyncError);
+                    } else {
+                        completeResult(result, asyncValue);
+                    }
+                });
+                return;
+            }
+            completeResult(result, value);
+        });
+        result.whenComplete((value, error) -> {
+            if (result.isCancelled()) {
+                active.get().cancel(true);
+            }
+        });
+        return result;
+    }
+
+    private static void completeResult(CompletableFuture<ToolResult> target,
+                                       Object value) {
+        try {
+            target.complete(toResult(value));
+        } catch (Throwable error) {
+            target.completeExceptionally(error);
+        }
+    }
+
+    private static Set<String> parameterNames(List<ParameterBinding> bindings) {
+        Set<String> names = new LinkedHashSet<String>();
+        for (ParameterBinding binding : bindings) {
+            if (!binding.context && !binding.arguments) {
+                names.add(binding.name);
+            }
+        }
+        return Collections.unmodifiableSet(names);
     }
 
     private static ToolResult toResult(Object value) {
@@ -137,7 +246,29 @@ public final class AnnotatedTools {
         Parameter[] parameters = method.getParameters();
         List<ParameterBinding> result = new ArrayList<ParameterBinding>();
         Set<String> names = new LinkedHashSet<String>();
+        boolean contextSeen = false;
+        boolean argumentsSeen = false;
         for (Parameter parameter : parameters) {
+            if (parameter.getType() == ToolContext.class) {
+                if (contextSeen) {
+                    throw new IllegalArgumentException(
+                        "Tool method can declare ToolContext only once: " + method
+                    );
+                }
+                contextSeen = true;
+                result.add(ParameterBinding.context());
+                continue;
+            }
+            if (parameter.getType() == ToolArguments.class) {
+                if (argumentsSeen) {
+                    throw new IllegalArgumentException(
+                        "Tool method can declare ToolArguments only once: " + method
+                    );
+                }
+                argumentsSeen = true;
+                result.add(ParameterBinding.arguments());
+                continue;
+            }
             ToolParam annotation = parameter.getAnnotation(ToolParam.class);
             String name;
             String description;
@@ -146,8 +277,10 @@ public final class AnnotatedTools {
                 name = annotation.name().trim().isEmpty()
                     ? parameter.getName()
                     : annotation.name();
-                description = annotation.description();
-                required = annotation.required();
+                description = ToolSchemas.description(annotation);
+                required = ToolSchemas.required(
+                    parameter.getParameterizedType(), annotation
+                );
             } else {
                 if (!parameter.isNamePresent()) {
                     throw new IllegalArgumentException(
@@ -157,89 +290,67 @@ public final class AnnotatedTools {
                 }
                 name = parameter.getName();
                 description = "";
-                required = true;
+                required = ToolSchemas.required(parameter.getParameterizedType(), null);
             }
             if (!names.add(name)) {
                 throw new IllegalArgumentException("Duplicate tool parameter name: " + name);
             }
-            result.add(new ParameterBinding(name, description, required, parameter.getType()));
+            result.add(new ParameterBinding(
+                name, description, required, parameter.getParameterizedType(), false, false
+            ));
         }
         return result;
     }
 
     private static String schema(List<ParameterBinding> bindings) {
-        ObjectNode root = JsonSupport.MAPPER.createObjectNode();
-        root.put("type", "object");
-        ObjectNode properties = root.putObject("properties");
-        ArrayNode required = root.putArray("required");
+        List<ToolSchemas.Parameter> parameters =
+            new ArrayList<ToolSchemas.Parameter>();
         for (ParameterBinding binding : bindings) {
-            ObjectNode property = schemaFor(binding.type, new LinkedHashSet<Class<?>>());
-            if (!binding.description.isEmpty()) {
-                property.put("description", binding.description);
-            }
-            properties.set(binding.name, property);
-            if (binding.required) {
-                required.add(binding.name);
+            if (!binding.context && !binding.arguments) {
+                parameters.add(new ToolSchemas.Parameter(
+                    binding.name,
+                    binding.description,
+                    binding.required,
+                    binding.type,
+                    null
+                ));
             }
         }
-        return root.toString();
-    }
-
-    private static ObjectNode schemaFor(Class<?> type, Set<Class<?>> path) {
-        ObjectNode schema = JsonSupport.MAPPER.createObjectNode();
-        if (type == String.class || type == Character.class || type == char.class) {
-            schema.put("type", "string");
-        } else if (type == boolean.class || type == Boolean.class) {
-            schema.put("type", "boolean");
-        } else if (type == byte.class || type == Byte.class
-            || type == short.class || type == Short.class
-            || type == int.class || type == Integer.class
-            || type == long.class || type == Long.class) {
-            schema.put("type", "integer");
-        } else if (Number.class.isAssignableFrom(type)
-            || type == float.class || type == double.class) {
-            schema.put("type", "number");
-        } else if (type.isEnum()) {
-            schema.put("type", "string");
-            ArrayNode values = schema.putArray("enum");
-            for (Object constant : type.getEnumConstants()) {
-                values.add(((Enum<?>) constant).name());
-            }
-        } else if (type.isArray() || Collection.class.isAssignableFrom(type)) {
-            schema.put("type", "array");
-            schema.set("items", type.isArray()
-                ? schemaFor(type.getComponentType(), path)
-                : JsonSupport.MAPPER.createObjectNode().put("type", "object"));
-        } else {
-            schema.put("type", "object");
-            if (!path.add(type)) {
-                return schema;
-            }
-            ObjectNode properties = schema.putObject("properties");
-            for (Field field : type.getDeclaredFields()) {
-                if (!Modifier.isStatic(field.getModifiers()) && !field.isSynthetic()) {
-                    properties.set(field.getName(), schemaFor(field.getType(), path));
-                }
-            }
-            path.remove(type);
-        }
-        return schema;
+        return ToolSchemas.forParameters(parameters);
     }
 
     private static final class ParameterBinding {
         private final String name;
         private final String description;
         private final boolean required;
-        private final Class<?> type;
+        private final Type type;
+        private final boolean context;
+        private final boolean arguments;
 
         private ParameterBinding(String name,
                                  String description,
                                  boolean required,
-                                 Class<?> type) {
+                                 Type type,
+                                 boolean context,
+                                 boolean arguments) {
             this.name = name;
             this.description = description;
             this.required = required;
             this.type = type;
+            this.context = context;
+            this.arguments = arguments;
+        }
+
+        private static ParameterBinding context() {
+            return new ParameterBinding(
+                null, "", false, ToolContext.class, true, false
+            );
+        }
+
+        private static ParameterBinding arguments() {
+            return new ParameterBinding(
+                null, "", false, ToolArguments.class, false, true
+            );
         }
     }
 }

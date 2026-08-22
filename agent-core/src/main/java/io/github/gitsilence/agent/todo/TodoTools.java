@@ -3,95 +3,48 @@ package io.github.gitsilence.agent.todo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.gitsilence.agent.tool.AnnotatedTools;
 import io.github.gitsilence.agent.tool.Tool;
-import io.github.gitsilence.agent.tool.ToolDefinition;
-import io.github.gitsilence.agent.tool.ToolResult;
-import io.github.gitsilence.agent.tool.Tools;
+import io.github.gitsilence.agent.tool.ToolContext;
+import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
-import java.util.Arrays;
 import java.util.List;
-import java.util.Optional;
 
 public final class TodoTools {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final List<Tool> TOOLS = AnnotatedTools.from(new Handlers());
 
     private TodoTools() {
     }
 
     public static List<Tool> all() {
-        return Arrays.asList(create(), update(), complete(), list());
+        return TOOLS;
     }
 
     public static Tool create() {
-        return Tools.sync(
-            ToolDefinition.builder()
-                .name("todo_create")
-                .description("Creates a todo in the current agent run")
-                .inputSchema("{\"type\":\"object\",\"properties\":{"
-                    + "\"title\":{\"type\":\"string\"},"
-                    + "\"details\":{\"type\":\"string\"}},"
-                    + "\"required\":[\"title\"]}")
-                .build(),
-            (arguments, context) -> {
-                Todo todo = context.todos().create(
-                    arguments.requireString("title"),
-                    arguments.optionalString("details").orElse(null)
-                );
-                return ToolResult.success(toJson(todo));
-            }
-        );
+        return find("todo_create");
     }
 
     public static Tool update() {
-        return Tools.sync(
-            ToolDefinition.builder()
-                .name("todo_update")
-                .description("Updates a todo in the current agent run")
-                .inputSchema("{\"type\":\"object\",\"properties\":{"
-                    + "\"id\":{\"type\":\"string\"},"
-                    + "\"title\":{\"type\":\"string\"},"
-                    + "\"details\":{\"type\":\"string\"},"
-                    + "\"status\":{\"type\":\"string\","
-                    + "\"enum\":[\"PENDING\",\"IN_PROGRESS\",\"COMPLETED\"]}},"
-                    + "\"required\":[\"id\"]}")
-                .build(),
-            (arguments, context) -> {
-                Optional<String> status = arguments.optionalString("status");
-                Todo todo = context.todos().update(
-                    arguments.requireString("id"),
-                    arguments.optionalString("title").orElse(null),
-                    arguments.optionalString("details").orElse(null),
-                    status.isPresent() ? TodoStatus.valueOf(status.get()) : null
-                );
-                return ToolResult.success(toJson(todo));
-            }
-        );
+        return find("todo_update");
     }
 
     public static Tool complete() {
-        return Tools.sync(
-            ToolDefinition.builder()
-                .name("todo_complete")
-                .description("Marks a todo as completed")
-                .inputSchema("{\"type\":\"object\",\"properties\":{"
-                    + "\"id\":{\"type\":\"string\"}},"
-                    + "\"required\":[\"id\"]}")
-                .build(),
-            (arguments, context) -> ToolResult.success(toJson(
-                context.todos().complete(arguments.requireString("id"))
-            ))
-        );
+        return find("todo_complete");
     }
 
     public static Tool list() {
-        return Tools.sync(
-            ToolDefinition.builder()
-                .name("todo_list")
-                .description("Lists todos in the current agent run")
-                .build(),
-            (arguments, context) -> ToolResult.success(toJson(context.todos().list()))
-        );
+        return find("todo_list");
+    }
+
+    private static Tool find(String name) {
+        for (Tool tool : TOOLS) {
+            if (tool.definition().getName().equals(name)) {
+                return tool;
+            }
+        }
+        throw new IllegalStateException("Missing built-in todo tool: " + name);
     }
 
     private static String toJson(Todo todo) {
@@ -117,5 +70,53 @@ public final class TodoTools {
             }
         }
         return array.toString();
+    }
+
+    private static final class Handlers {
+
+        @io.github.gitsilence.agent.tool.annotation.Tool(
+            name = "todo_create",
+            description = "Creates a todo in the current agent run"
+        )
+        public String create(
+                @ToolParam(description = "Short todo title") String title,
+                @ToolParam(
+                    description = "Optional todo details", required = false
+                ) String details,
+                ToolContext context) {
+            return toJson(context.todos().create(title, details));
+        }
+
+        @io.github.gitsilence.agent.tool.annotation.Tool(
+            name = "todo_update",
+            description = "Updates a todo in the current agent run"
+        )
+        public String update(
+                @ToolParam(description = "Todo identifier") String id,
+                @ToolParam(description = "New title", required = false) String title,
+                @ToolParam(description = "New details", required = false) String details,
+                @ToolParam(description = "New todo status", required = false)
+                    TodoStatus status,
+                ToolContext context) {
+            return toJson(context.todos().update(id, title, details, status));
+        }
+
+        @io.github.gitsilence.agent.tool.annotation.Tool(
+            name = "todo_complete",
+            description = "Marks a todo as completed"
+        )
+        public String complete(
+                @ToolParam(description = "Todo identifier") String id,
+                ToolContext context) {
+            return toJson(context.todos().complete(id));
+        }
+
+        @io.github.gitsilence.agent.tool.annotation.Tool(
+            name = "todo_list",
+            description = "Lists todos in the current agent run"
+        )
+        public String list(ToolContext context) {
+            return toJson(context.todos().list());
+        }
     }
 }

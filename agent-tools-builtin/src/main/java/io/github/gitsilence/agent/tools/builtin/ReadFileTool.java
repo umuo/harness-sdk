@@ -1,11 +1,10 @@
 package io.github.gitsilence.agent.tools.builtin;
 
+import io.github.gitsilence.agent.tool.AbstractTool;
 import io.github.gitsilence.agent.tool.Tool;
-import io.github.gitsilence.agent.tool.ToolArguments;
 import io.github.gitsilence.agent.tool.ToolContext;
-import io.github.gitsilence.agent.tool.ToolDefinition;
 import io.github.gitsilence.agent.tool.ToolResult;
-import io.github.gitsilence.agent.tool.Tools;
+import io.github.gitsilence.agent.tool.annotation.ToolParam;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
@@ -24,10 +23,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-final class ReadFileTool {
+final class ReadFileTool extends AbstractTool<ReadFileTool.Input> {
 
-    private ReadFileTool() {
-    }
+    private final WorkspacePathResolver paths;
+    private final FileObservationTracker observations;
+    private final PathLocks locks;
+    private final int defaultLimit;
+    private final int maxLineLength;
+    private final int maxBytes;
 
     static Tool create(WorkspacePathResolver paths,
                        FileObservationTracker observations,
@@ -35,38 +38,62 @@ final class ReadFileTool {
                        int defaultLimit,
                        int maxLineLength,
                        int maxBytes) {
-        ToolDefinition definition = ToolDefinition.builder()
-            .name("read_file")
-            .description(
-                "Read a UTF-8 text file with 1-based line numbers. "
-                    + "Use offset and limit to page through large files."
-            )
-            .inputSchema("{\"type\":\"object\",\"properties\":{"
-                + "\"file_path\":{\"type\":\"string\"},"
-                + "\"offset\":{\"type\":\"integer\",\"minimum\":1},"
-                + "\"limit\":{\"type\":\"integer\",\"minimum\":1}},"
-                + "\"required\":[\"file_path\"],\"additionalProperties\":false}")
-            .build();
-        return Tools.sync(definition, (arguments, context) -> {
-            String input = arguments.requireString("file_path");
-            int offset = arguments.optionalInt("offset").orElse(1);
-            int limit = arguments.optionalInt("limit").orElse(defaultLimit);
-            if (offset < 1) {
-                throw new IllegalArgumentException("offset must be at least 1");
-            }
-            if (limit < 1 || limit > defaultLimit) {
-                throw new IllegalArgumentException(
-                    "limit must be between 1 and " + defaultLimit
-                );
-            }
-            Path path = paths.resolve(input);
-            synchronized (locks.forPath(path)) {
-                return read(
-                    path, paths.display(path), offset, limit,
-                    maxLineLength, maxBytes, observations, context
-                );
-            }
-        });
+        return new ReadFileTool(
+            paths, observations, locks, defaultLimit, maxLineLength, maxBytes
+        );
+    }
+
+    private ReadFileTool(WorkspacePathResolver paths,
+                         FileObservationTracker observations,
+                         PathLocks locks,
+                         int defaultLimit,
+                         int maxLineLength,
+                         int maxBytes) {
+        super(
+            "read_file",
+            "Read a UTF-8 text file with 1-based line numbers. "
+                + "Use offset and limit to page through large files.",
+            Input.class
+        );
+        this.paths = paths;
+        this.observations = observations;
+        this.locks = locks;
+        this.defaultLimit = defaultLimit;
+        this.maxLineLength = maxLineLength;
+        this.maxBytes = maxBytes;
+    }
+
+    @Override
+    protected ToolResult execute(Input arguments, ToolContext context) {
+        String input = arguments.filePath;
+        int offset = arguments.offset == null ? 1 : arguments.offset;
+        int limit = arguments.limit == null ? defaultLimit : arguments.limit;
+        if (offset < 1) {
+            throw new IllegalArgumentException("offset must be at least 1");
+        }
+        if (limit < 1 || limit > defaultLimit) {
+            throw new IllegalArgumentException(
+                "limit must be between 1 and " + defaultLimit
+            );
+        }
+        Path path = paths.resolve(input);
+        synchronized (locks.forPath(path)) {
+            return read(
+                path, paths.display(path), offset, limit,
+                maxLineLength, maxBytes, observations, context
+            );
+        }
+    }
+
+    static final class Input {
+        @ToolParam(name = "file_path", description = "Path to the UTF-8 text file")
+        public String filePath;
+
+        @ToolParam(description = "First 1-based line to return", required = false)
+        public Integer offset;
+
+        @ToolParam(description = "Maximum number of lines to return", required = false)
+        public Integer limit;
     }
 
     private static ToolResult read(Path path,

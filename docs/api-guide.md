@@ -1,6 +1,64 @@
 # API Guide
 
-## Define a programmatic tool
+## Define a typed Tool by inheritance
+
+```java
+public final class EchoTool extends AbstractTool<EchoTool.Input> {
+
+    public EchoTool() {
+        super("echo", "Returns the supplied text", Input.class);
+    }
+
+    @Override
+    protected ToolResult execute(Input input, ToolContext context) {
+        return ToolResult.success(input.text);
+    }
+
+    public static final class Input {
+        @ToolParam(description = "Text to return")
+        public String text;
+
+        @ToolParam(
+            name = "uppercase",
+            description = "Whether to convert the text to upper case",
+            required = false
+        )
+        public Boolean uppercase;
+    }
+}
+```
+
+The SDK generates the object JSON Schema and binds arguments to `Input`.
+Synchronous logic runs on the `AgentRunner` worker executor. Extend
+`AbstractAsyncTool<I>` and implement `executeAsync` when the operation already
+returns a `CompletableFuture<ToolResult>`.
+
+## Define annotated tools
+
+```java
+public final class MathTools {
+
+    @Tool(name = "add", description = "Adds two integers")
+    public int add(
+            @ToolParam(description = "First integer") int a,
+            @ToolParam(description = "Second integer") int b,
+            ToolContext context) {
+        return a + b;
+    }
+}
+```
+
+Register all annotated methods with `AgentBuilder.toolsFrom(new MathTools())`.
+On Java 8, parameter names are not reliably available unless compilation uses
+`-parameters`; explicit `@ToolParam(name = ...)` is therefore recommended.
+`ToolContext` and `ToolArguments` method parameters are injected by the runtime
+and omitted from the schema. A method can return a `String`, a serializable
+object, `ToolResult`, or the corresponding `CompletableFuture`/`CompletionStage`.
+
+## Use the low-level escape hatch
+
+Manual schemas remain available for unusual provider-specific schema keywords
+or dynamic definitions:
 
 ```java
 Tool echo = Tools.sync(
@@ -15,26 +73,8 @@ Tool echo = Tools.sync(
 );
 ```
 
-`Tools.sync` runs the handler on the AgentRunner worker executor.
-`Tools.async` accepts a handler returning `CompletableFuture<ToolResult>`.
-
-## Define annotated tools
-
-```java
-public final class MathTools {
-
-    @Tool(name = "add", description = "Adds two integers")
-    public int add(
-            @ToolParam(name = "a", description = "First integer") int a,
-            @ToolParam(name = "b", description = "Second integer") int b) {
-        return a + b;
-    }
-}
-```
-
-Register all annotated methods with `AgentBuilder.toolsFrom(new MathTools())`.
-On Java 8, parameter names are not reliably available unless compilation uses
-`-parameters`; explicit `@ToolParam(name = ...)` is therefore recommended.
+This is infrastructure API, not the recommended default for application Tools.
+See [Tool authoring](tools.md) for type support and binding rules.
 
 ## Build and run an Agent
 

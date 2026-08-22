@@ -2,6 +2,8 @@ package io.github.gitsilence.agent.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.util.Iterator;
+import java.util.Set;
 import java.util.Optional;
 
 public final class ToolArguments {
@@ -99,6 +101,18 @@ public final class ToolArguments {
 
     JsonNode node(String name) {
         return root.get(name);
+    }
+
+    void rejectUnknown(Set<String> allowedNames) {
+        Iterator<String> names = root.fieldNames();
+        while (names.hasNext()) {
+            String name = names.next();
+            if (!allowedNames.contains(name)) {
+                throw new IllegalArgumentException(
+                    "Unknown tool argument: " + name
+                );
+            }
+        }
     }
 
     private JsonNode require(String name) {
