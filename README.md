@@ -9,8 +9,8 @@ agent loop.
   runtime.
 - `agent-model-http`: Java 8 HTTP/SSE runtime plus OpenAI-compatible Chat
   Completions, OpenAI Responses API and Anthropic Messages adapters.
-- `agent-mcp`: Java 8 MCP client, stdio transport, Tool discovery and local
-  Tool adapters.
+- `agent-mcp`: Java 8 MCP 2026-07-28/legacy client, stdio transport, Tool
+  discovery, multi round-trip input and local Tool adapters.
 - `agent-tools-builtin`: bounded workspace file, glob, edit and opt-in Bash
   tools.
 - `agent-examples`: executable examples.

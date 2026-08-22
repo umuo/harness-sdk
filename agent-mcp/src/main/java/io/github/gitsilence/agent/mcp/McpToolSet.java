@@ -19,22 +19,24 @@ public final class McpToolSet implements AutoCloseable {
 
     private final McpClient client;
     private final McpInitializeResult initializeResult;
+    private final McpToolCatalog catalog;
     private final List<Tool> tools;
     private final Map<String, String> localToRemoteNames;
     private final boolean closeClient;
 
     private McpToolSet(McpClient client,
                        McpInitializeResult initializeResult,
-                       List<McpToolDefinition> definitions,
+                       McpToolCatalog catalog,
                        String namespace,
                        ToolOutputStore outputStore,
                        boolean closeClient) {
         this.client = client;
         this.initializeResult = initializeResult;
+        this.catalog = catalog;
         this.closeClient = closeClient;
         List<Tool> adapted = new ArrayList<Tool>();
         Map<String, String> names = new LinkedHashMap<String, String>();
-        for (McpToolDefinition definition : definitions) {
+        for (McpToolDefinition definition : catalog.getTools()) {
             if ("required".equals(definition.getTaskSupport())) {
                 throw new McpClientException(
                     "MCP_TASKS_UNSUPPORTED",
@@ -77,11 +79,11 @@ public final class McpToolSet implements AutoCloseable {
         Objects.requireNonNull(outputStore, "outputStore");
         McpToolNames.validateNamespace(namespace);
         CompletableFuture<McpToolSet> discovered = client.initialize()
-            .thenCompose(initialized -> client.listTools()
-                .thenApply(definitions -> new McpToolSet(
+            .thenCompose(initialized -> client.listToolCatalog()
+                .thenApply(catalog -> new McpToolSet(
                     client,
                     initialized,
-                    definitions,
+                    catalog,
                     namespace,
                     outputStore,
                     closeClient
@@ -100,6 +102,10 @@ public final class McpToolSet implements AutoCloseable {
 
     public McpInitializeResult getInitializeResult() {
         return initializeResult;
+    }
+
+    public McpToolCatalog getCatalog() {
+        return catalog;
     }
 
     public Map<String, String> getLocalToRemoteNames() {

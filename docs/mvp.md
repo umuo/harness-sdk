@@ -27,8 +27,9 @@
   `bash` Tools.
 - Recoverable oversized Tool output through OS-temp snapshots and source
   references, without recursive spill copies.
-- MCP 2025-11-25 client lifecycle over stdio, paginated Tool discovery, Tool
-  calls, structured errors and Agent Tool adaptation.
+- MCP 2026-07-28 stateless stdio client with automatic 2025-11-25 fallback,
+  paginated and cache-aware Tool discovery, multi round-trip Tool input,
+  structured errors and Agent Tool adaptation.
 - Runnable examples and scripted-model unit tests.
 
 ## Deliberately excluded
@@ -39,8 +40,8 @@
 - Dynamic plugin loading, hot unload, dependency injection or service
   container semantics.
 - RAG and vector stores.
-- MCP Streamable HTTP, legacy HTTP+SSE, resources, prompts, roots, sampling,
-  elicitation, task-augmented requests and server mode.
+- MCP Streamable HTTP, legacy HTTP+SSE, resources, prompts, subscriptions,
+  first-class roots/sampling/elicitation APIs, Tasks extension and server mode.
 - Human-in-the-loop runtime.
 - A semantic or rule-based Skill router; the model selects from descriptions.
 - Distributed execution.

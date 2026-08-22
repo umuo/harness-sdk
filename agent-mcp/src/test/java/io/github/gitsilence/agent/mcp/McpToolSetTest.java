@@ -141,7 +141,7 @@ class McpToolSetTest {
 
     private static final class FakeClient implements McpClient {
         private final McpInitializeResult initialized = new McpInitializeResult(
-            StdioMcpClient.LATEST_PROTOCOL_VERSION,
+            StdioMcpClient.LATEST_LEGACY_PROTOCOL_VERSION,
             new McpServerInfo("fake", "1", ""),
             "{\"tools\":{}}",
             "",

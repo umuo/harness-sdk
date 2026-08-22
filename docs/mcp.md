@@ -2,13 +2,20 @@
 
 ## Scope
 
-`agent-mcp` lets an Agent consume Tools exposed by an MCP server. The first
-version implements the MCP 2025-11-25 client lifecycle and the stdio transport:
+`agent-mcp` lets an Agent consume Tools exposed by an MCP server. It supports
+the current MCP 2026-07-28 protocol and legacy initialization-based servers
+over stdio:
 
-- lazy `initialize` followed by `notifications/initialized`;
-- protocol-version validation and server capability inspection;
+- stateless 2026 requests with protocol version, client identity and client
+  capabilities on every request;
+- `server/discover`, `resultType` validation, discovery and Tool-list cache
+  hints;
+- automatic stdio era detection with fallback to the 2025-11-25
+  `initialize`/`notifications/initialized` lifecycle;
 - fully paginated `tools/list` with duplicate and size limits;
 - asynchronous `tools/call` through `CompletableFuture`;
+- 2026 multi round-trip `input_required` Tool results through an application
+  supplied `McpInputHandler`;
 - JSON-RPC request correlation, timeout and cancellation notification;
 - bounded server `stderr` diagnostics and deterministic subprocess shutdown;
 - conversion of discovered MCP Tools into normal Agent SDK `Tool` instances.
@@ -19,18 +26,20 @@ or parallel execution runtime. MCP Tools use the existing Agent Loop,
 
 ## Why the official Java SDK is not a dependency
 
-The official SDK was evaluated first and remains the reference for lifecycle
-and API semantics. However, the current
+The official SDK was evaluated first and remains a reference for API
+semantics. However, its current
 [`io.modelcontextprotocol.sdk:mcp:2.0.0`](https://central.sonatype.com/artifact/io.modelcontextprotocol.sdk/mcp/2.0.0)
 build sets Java 17 as its compiler release in its
 [`pom.xml`](https://github.com/modelcontextprotocol/java-sdk/blob/main/pom.xml),
-while this project promises Java 8 compatibility. Linking it would raise the
-runtime baseline for the whole SDK.
+while this project promises Java 8 compatibility. That release also targets
+the initialization-based 2025-11-25 protocol rather than the stateless
+2026-07-28 revision. Linking it would both raise the runtime baseline and not
+provide the new wire protocol.
 
 The available Java 8 backport is an old fork of the pre-1.0 SDK and is not
 published in Maven Central, so it is not used as a production dependency.
 Instead, `agent-mcp` implements a narrow Java 8 client directly from the
-[official MCP specification](https://modelcontextprotocol.io/specification/2025-11-25),
+[official MCP 2026-07-28 specification](https://modelcontextprotocol.io/specification/2026-07-28),
 and isolates it behind `McpClient`. A future optional Java 17 module can provide
 an official-SDK-backed `McpClient` without changing `agent-core` or Agent code.
 
@@ -84,11 +93,65 @@ try (McpToolSet filesystem = Futures.join(
 }
 ```
 
-`McpToolSet.discover` initializes the server, follows every `tools/list` page,
-and returns an immutable snapshot. Closing the set closes the MCP client and
-its child process. The Agent must finish using those Tools before the set is
-closed. The overload accepting `closeClient=false` supports a separately owned
-client.
+`McpToolSet.discover` prepares the connection, follows every `tools/list` page,
+and returns an immutable snapshot. For a modern server, preparation means
+`server/discover`; no wire-level `initialize` session exists. For a legacy
+server, it means the old initialization handshake. Closing the set closes the
+MCP client and its child process. The Agent must finish using those Tools before
+the set is closed. The overload accepting `closeClient=false` supports a
+separately owned client.
+
+## Protocol selection and cache hints
+
+`AUTO` is the default. On stdio it probes with a modern `server/discover`
+request. A non-modern error or timeout causes the server process to be restarted
+and opened using the 2025-11-25 handshake. Recognized modern protocol errors
+are surfaced instead of being incorrectly treated as a legacy server.
+
+```java
+import io.github.gitsilence.agent.mcp.McpProtocolMode;
+
+StdioMcpClient modernOnly = StdioMcpClient.builder("my-mcp-server")
+    .protocolMode(McpProtocolMode.STATELESS)
+    .clientCapabilities("{\"elicitation\":{\"form\":{}}}")
+    .build();
+
+StdioMcpClient legacyOnly = StdioMcpClient.builder("old-mcp-server")
+    .protocolMode(McpProtocolMode.LEGACY)
+    .build();
+```
+
+Use an explicit mode when starting the process twice during auto-detection is
+undesirable or when the server era is already known. `McpInitializeResult`
+exposes the selected era, protocol versions, server capabilities and discovery
+cache hint. `McpToolSet.getCatalog()` exposes the aggregated `tools/list`
+`ttlMs` and `cacheScope`; the snapshot is not silently refreshed.
+
+## Multi round-trip Tool input
+
+MCP 2026 replaces server-initiated requests with an `input_required` result.
+The client passes its opaque `inputRequests` and `requestState` to an async
+handler, then retries the original Tool call with a new JSON-RPC id:
+
+```java
+StdioMcpClient client = StdioMcpClient.builder("my-mcp-server")
+    .clientCapabilities("{\"elicitation\":{\"form\":{}}}")
+    .inputHandler(required -> {
+        // Render required.getInputRequestsJson() in the host application's UI.
+        // Keys in this JSON response must match the inputRequests keys.
+        return CompletableFuture.completedFuture(
+            "{\"confirmation\":{\"action\":\"accept\"}}"
+        );
+    })
+    .maxInputRounds(4)
+    .build();
+```
+
+The SDK intentionally does not display UI or ask the LLM for approval by
+itself. Without a handler it fails with `MCP_INPUT_REQUIRED`, including a
+bounded diagnostic of the pending requests. Handler failures and excessive
+rounds have separate stable error codes. Cancellation propagates to either the
+active MCP request or the handler future.
 
 ## Tool names
 
@@ -165,19 +228,20 @@ try (McpToolSet remote = Futures.join(
   itself is not treated as failure, as required by the MCP transport spec.
 - A stdout message is bounded before JSON parsing. Tool discovery also has
   page and total-Tool limits.
-- `tools/list_changed` notifications are not hot-applied to an already built
-  Agent. Close and rediscover a new `McpToolSet`, then build a new Agent when a
-  server changes its Tool catalog.
-- Experimental Tools declaring `execution.taskSupport=required` fail Tool-set
-  discovery explicitly instead of being exposed as Tools that cannot execute.
+- 2026 Tool-list notifications require a subscription, which is not yet
+  implemented. Cache hints are exposed but not used to hot-mutate an already
+  built Agent. Rediscover a new `McpToolSet` and build a new Agent when needed.
+- Legacy experimental Tools declaring `execution.taskSupport=required` fail
+  Tool-set discovery explicitly. The 2026 Tasks extension is not advertised.
 
 ## Deliberately deferred
 
 - Streamable HTTP and legacy HTTP+SSE transports;
 - authorization and remote-session resumption;
 - resources and prompts;
-- roots, sampling and elicitation callbacks;
-- experimental MCP task-augmented requests;
+- first-class roots, sampling and elicitation APIs beyond the generic
+  `McpInputHandler` bridge;
+- subscriptions and the MCP Tasks extension;
 - MCP server mode;
 - live mutation of an Agent's immutable Tool registry.
 

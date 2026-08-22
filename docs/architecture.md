@@ -183,16 +183,18 @@ Agent Loop -> ToolRegistry -> Tool
                      stdio MCP server
 ```
 
-`agent-mcp` owns MCP initialization, version negotiation, paginated Tool
-discovery, JSON-RPC correlation, timeouts and subprocess shutdown. A required
+`agent-mcp` owns 2026 stateless discovery and per-request metadata, legacy
+initialization fallback, paginated Tool discovery, JSON-RPC correlation,
+multi round-trip Tool input, timeouts and subprocess shutdown. A required
 namespace converts MCP names to valid, collision-resistant local Tool names.
 The Agent Loop then treats local and MCP Tools identically, so existing Tool
 interceptors, parallel execution, error policy and output limits still apply.
 
-The current official MCP Java SDK requires Java 17, so it cannot be a binary
-dependency of this Java 8 build. `McpClient` is deliberately narrow enough for
-a future Java 17 adapter backed by the official SDK without changing Core or
-Agent APIs. See [MCP client and Tool integration](mcp.md).
+The current official MCP Java SDK requires Java 17 and targets the legacy
+2025-11-25 wire protocol, so it cannot supply the Java 8/2026 implementation.
+`McpClient` remains narrow enough for a future official-SDK-backed adapter
+without changing Core or Agent APIs. See
+[MCP client and Tool integration](mcp.md).
 
 ## Agent execution events and plugins
 

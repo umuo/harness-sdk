@@ -44,11 +44,13 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class StdioMcpClient implements McpClient {
 
-    public static final String LATEST_PROTOCOL_VERSION = "2025-11-25";
+    public static final String LATEST_PROTOCOL_VERSION = "2026-07-28";
+    public static final String LATEST_LEGACY_PROTOCOL_VERSION = "2025-11-25";
 
     private static final List<String> DEFAULT_SUPPORTED_VERSIONS =
         Collections.unmodifiableList(Arrays.asList(
-            "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"
+            "2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26",
+            "2024-11-05"
         ));
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -63,8 +65,12 @@ public final class StdioMcpClient implements McpClient {
     private final int maxTools;
     private final String protocolVersion;
     private final Set<String> supportedProtocolVersions;
+    private final McpProtocolMode protocolMode;
     private final String clientName;
     private final String clientVersion;
+    private final ObjectNode clientCapabilities;
+    private final McpInputHandler inputHandler;
+    private final int maxInputRounds;
     private final AtomicLong requestIds = new AtomicLong();
     private final ConcurrentMap<String, PendingRequest> pending =
         new ConcurrentHashMap<String, PendingRequest>();
@@ -98,8 +104,14 @@ public final class StdioMcpClient implements McpClient {
         this.supportedProtocolVersions = Collections.unmodifiableSet(
             new LinkedHashSet<String>(builder.supportedProtocolVersions)
         );
+        this.protocolMode = builder.protocolMode;
         this.clientName = builder.clientName;
         this.clientVersion = builder.clientVersion;
+        this.clientCapabilities = parseObject(
+            builder.clientCapabilitiesJson, "clientCapabilities"
+        );
+        this.inputHandler = builder.inputHandler;
+        this.maxInputRounds = builder.maxInputRounds;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(
             daemonFactory("agent-mcp-timeout")
         );
@@ -133,47 +145,106 @@ public final class StdioMcpClient implements McpClient {
                 return initializeFuture;
             }
 
-            ObjectNode params = mapper.createObjectNode();
-            params.put("protocolVersion", protocolVersion);
-            params.set("capabilities", mapper.createObjectNode());
-            ObjectNode clientInfo = params.putObject("clientInfo");
-            clientInfo.put("name", clientName);
-            clientInfo.put("version", clientVersion);
-
             final CompletableFuture<McpInitializeResult> result =
                 new CompletableFuture<McpInitializeResult>();
             initializeFuture = result;
-            request("initialize", params, false).whenComplete((node, error) -> {
-                if (error != null) {
-                    result.completeExceptionally(Futures.unwrap(error));
-                    close();
-                    return;
-                }
-                final McpInitializeResult parsed;
-                try {
-                    parsed = parseInitialize(node);
-                } catch (RuntimeException parseError) {
-                    result.completeExceptionally(parseError);
-                    close();
-                    return;
-                }
-                notification("notifications/initialized", null)
-                    .whenComplete((ignored, notifyError) -> {
-                        if (notifyError != null) {
-                            result.completeExceptionally(Futures.unwrap(notifyError));
-                            close();
-                            return;
-                        }
-                        initializeResult = parsed;
-                        result.complete(parsed);
-                    });
-            });
+            if (protocolMode == McpProtocolMode.LEGACY) {
+                initializeLegacy(result);
+            } else {
+                discoverStateless(result);
+            }
             return result;
         }
     }
 
+    private void discoverStateless(
+            final CompletableFuture<McpInitializeResult> output) {
+        ObjectNode params = mapper.createObjectNode();
+        attachRequestMeta(params, LATEST_PROTOCOL_VERSION);
+        request("server/discover", params, false).whenComplete((node, error) -> {
+            if (error != null) {
+                if (protocolMode == McpProtocolMode.AUTO
+                        && !isRecognizedModernError(error)) {
+                    fallbackToLegacy(output);
+                } else {
+                    failPreparation(output, Futures.unwrap(error));
+                }
+                return;
+            }
+            try {
+                McpInitializeResult discovered = parseDiscover(node);
+                initializeResult = discovered;
+                output.complete(discovered);
+            } catch (RuntimeException parseError) {
+                // A valid JSON-RPC result proves this is a modern server. A
+                // malformed or unsupported modern result must not be retried
+                // as the stateful legacy protocol on the same configuration.
+                failPreparation(output, parseError);
+            }
+        });
+    }
+
+    private void fallbackToLegacy(
+            CompletableFuture<McpInitializeResult> output) {
+        try {
+            restartProcess();
+            initializeLegacy(output);
+        } catch (Throwable error) {
+            failPreparation(output, new McpClientException(
+                "MCP_LEGACY_FALLBACK_FAILED",
+                "Cannot restart MCP server for legacy negotiation: "
+                    + message(error),
+                true,
+                error
+            ));
+        }
+    }
+
+    private void initializeLegacy(
+            final CompletableFuture<McpInitializeResult> output) {
+        ObjectNode params = mapper.createObjectNode();
+        params.put("protocolVersion", legacyProtocolVersion());
+        params.set("capabilities", mapper.createObjectNode());
+        ObjectNode clientInfo = params.putObject("clientInfo");
+        clientInfo.put("name", clientName);
+        clientInfo.put("version", clientVersion);
+        request("initialize", params, false).whenComplete((node, error) -> {
+            if (error != null) {
+                failPreparation(output, Futures.unwrap(error));
+                return;
+            }
+            final McpInitializeResult parsed;
+            try {
+                parsed = parseInitialize(node);
+            } catch (RuntimeException parseError) {
+                failPreparation(output, parseError);
+                return;
+            }
+            notification("notifications/initialized", null)
+                .whenComplete((ignored, notifyError) -> {
+                    if (notifyError != null) {
+                        failPreparation(output, Futures.unwrap(notifyError));
+                        return;
+                    }
+                    initializeResult = parsed;
+                    output.complete(parsed);
+                });
+        });
+    }
+
+    private void failPreparation(CompletableFuture<McpInitializeResult> output,
+                                 Throwable error) {
+        output.completeExceptionally(error);
+        close();
+    }
+
     @Override
     public CompletableFuture<List<McpToolDefinition>> listTools() {
+        return listToolCatalog().thenApply(McpToolCatalog::getTools);
+    }
+
+    @Override
+    public CompletableFuture<McpToolCatalog> listToolCatalog() {
         return initialize().thenCompose(initialized -> {
             if (!initialized.isToolsSupported()) {
                 return Futures.failed(new McpClientException(
@@ -185,7 +256,9 @@ public final class StdioMcpClient implements McpClient {
             }
             List<McpToolDefinition> tools = new ArrayList<McpToolDefinition>();
             Set<String> names = new HashSet<String>();
-            return listToolPage(null, 0, tools, names);
+            return listToolPage(
+                null, 0, tools, names, new CatalogAccumulator()
+            );
         });
     }
 
@@ -218,8 +291,8 @@ public final class StdioMcpClient implements McpClient {
 
         final CompletableFuture<McpCallToolResult> output =
             new CompletableFuture<McpCallToolResult>();
-        final AtomicReference<CompletableFuture<JsonNode>> activeRequest =
-            new AtomicReference<CompletableFuture<JsonNode>>();
+        final AtomicReference<CompletableFuture<?>> activeOperation =
+            new AtomicReference<CompletableFuture<?>>();
         initialize().whenComplete((initialized, initializeError) -> {
             if (initializeError != null) {
                 output.completeExceptionally(Futures.unwrap(initializeError));
@@ -236,36 +309,154 @@ public final class StdioMcpClient implements McpClient {
                 ));
                 return;
             }
-            ObjectNode params = mapper.createObjectNode();
-            params.put("name", toolName);
-            params.set("arguments", arguments);
-            CompletableFuture<JsonNode> call = request("tools/call", params, true);
-            activeRequest.set(call);
+            callToolRound(
+                toolName, arguments, null, null, 0, output, activeOperation
+            );
+        });
+        output.whenComplete((ignored, error) -> {
             if (output.isCancelled()) {
-                call.cancel(true);
+                CompletableFuture<?> active = activeOperation.get();
+                if (active != null) {
+                    active.cancel(true);
+                }
+            }
+        });
+        return output;
+    }
+
+    private void callToolRound(
+            final String toolName,
+            final JsonNode arguments,
+            final JsonNode inputResponses,
+            final String requestState,
+            final int round,
+            final CompletableFuture<McpCallToolResult> output,
+            final AtomicReference<CompletableFuture<?>> activeOperation) {
+        if (output.isCancelled()) return;
+        ObjectNode params = mapper.createObjectNode();
+        params.put("name", toolName);
+        params.set("arguments", arguments);
+        if (inputResponses != null) {
+            params.set("inputResponses", inputResponses);
+        }
+        if (requestState != null && !requestState.isEmpty()) {
+            params.put("requestState", requestState);
+        }
+        attachRequestMetaIfStateless(params);
+
+        CompletableFuture<JsonNode> call = request("tools/call", params, true);
+        activeOperation.set(call);
+        if (output.isCancelled()) {
+            call.cancel(true);
+            return;
+        }
+        call.whenComplete((result, callError) -> {
+            if (callError != null) {
+                output.completeExceptionally(Futures.unwrap(callError));
                 return;
             }
-            call.whenComplete((result, callError) -> {
-                if (callError != null) {
-                    output.completeExceptionally(Futures.unwrap(callError));
-                    return;
-                }
+            final String resultType;
+            try {
+                resultType = resultType(result, "tools/call");
+            } catch (RuntimeException protocolFailure) {
+                output.completeExceptionally(protocolFailure);
+                return;
+            }
+            if ("complete".equals(resultType)) {
                 try {
                     output.complete(McpContentRenderer.render(result));
                 } catch (RuntimeException renderError) {
                     output.completeExceptionally(renderError);
                 }
-            });
-        });
-        output.whenComplete((ignored, error) -> {
-            if (output.isCancelled()) {
-                CompletableFuture<JsonNode> call = activeRequest.get();
-                if (call != null) {
-                    call.cancel(true);
-                }
+                return;
             }
+            if (!"input_required".equals(resultType)) {
+                output.completeExceptionally(unsupportedResultType(
+                    "tools/call", resultType
+                ));
+                return;
+            }
+            resolveInputRequired(
+                toolName, arguments, round, result, output, activeOperation
+            );
         });
-        return output;
+    }
+
+    private void resolveInputRequired(
+            final String toolName,
+            final JsonNode arguments,
+            final int round,
+            final JsonNode result,
+            final CompletableFuture<McpCallToolResult> output,
+            final AtomicReference<CompletableFuture<?>> activeOperation) {
+        if (round >= maxInputRounds) {
+            output.completeExceptionally(new McpClientException(
+                "MCP_INPUT_ROUND_LIMIT",
+                "MCP Tool '" + toolName + "' exceeded " + maxInputRounds
+                    + " input_required rounds",
+                false
+            ));
+            return;
+        }
+        final McpInputRequired required;
+        try {
+            required = parseInputRequired(toolName, round + 1, result);
+        } catch (RuntimeException parseError) {
+            output.completeExceptionally(parseError);
+            return;
+        }
+        if (inputHandler == null) {
+            output.completeExceptionally(new McpClientException(
+                "MCP_INPUT_REQUIRED",
+                "MCP Tool '" + toolName + "' requires additional input, but "
+                    + "no McpInputHandler is configured; inputRequests="
+                    + abbreviate(required.getInputRequestsJson(), 512),
+                false
+            ));
+            return;
+        }
+
+        final CompletableFuture<String> handled;
+        try {
+            handled = inputHandler.respond(required);
+            if (handled == null) {
+                throw new IllegalStateException(
+                    "McpInputHandler returned null instead of a CompletableFuture"
+                );
+            }
+        } catch (Throwable handlerError) {
+            output.completeExceptionally(inputHandlerError(handlerError));
+            return;
+        }
+        activeOperation.set(handled);
+        if (output.isCancelled()) {
+            handled.cancel(true);
+            return;
+        }
+        handled.whenComplete((responsesJson, handlerError) -> {
+            if (handlerError != null) {
+                output.completeExceptionally(inputHandlerError(
+                    Futures.unwrap(handlerError)
+                ));
+                return;
+            }
+            final ObjectNode responses;
+            try {
+                responses = parseObject(responsesJson, "MCP input responses");
+            } catch (RuntimeException parseError) {
+                output.completeExceptionally(inputHandlerError(parseError));
+                return;
+            }
+            callToolRound(
+                toolName,
+                arguments,
+                responses,
+                required.getRequestState(),
+                round + 1,
+                output,
+                activeOperation
+            );
+        });
     }
 
     @Override
@@ -292,37 +483,19 @@ public final class StdioMcpClient implements McpClient {
             currentWriter = writer;
         }
 
-        if (currentWriter != null) {
-            try {
-                currentWriter.close();
-            } catch (IOException ignored) {
-                // Process termination below is the fallback.
-            }
-        }
-        if (current != null) {
-            try {
-                if (!current.waitFor(shutdownTimeoutMillis, TimeUnit.MILLISECONDS)) {
-                    current.destroy();
-                    if (!current.waitFor(shutdownTimeoutMillis, TimeUnit.MILLISECONDS)) {
-                        current.destroyForcibly();
-                    }
-                }
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                current.destroyForcibly();
-            }
-        }
+        stopProcess(current, currentWriter);
         failPending(new McpClientException(
             "MCP_CLIENT_CLOSED", "MCP client was closed", false
         ));
         scheduler.shutdownNow();
     }
 
-    private CompletableFuture<List<McpToolDefinition>> listToolPage(
+    private CompletableFuture<McpToolCatalog> listToolPage(
             final String cursor,
             final int page,
             final List<McpToolDefinition> tools,
-            final Set<String> names) {
+            final Set<String> names,
+            final CatalogAccumulator catalog) {
         if (page >= maxToolPages) {
             return Futures.failed(new McpClientException(
                 "MCP_TOOL_LIST_LIMIT",
@@ -334,7 +507,16 @@ public final class StdioMcpClient implements McpClient {
         if (cursor != null) {
             params.put("cursor", cursor);
         }
+        attachRequestMetaIfStateless(params);
         return request("tools/list", params, true).thenCompose(result -> {
+            try {
+                requireCompleteResult(result, "tools/list");
+                if (initializeResult.isStateless()) {
+                    catalog.record(parseCacheHint(result, "tools/list"));
+                }
+            } catch (RuntimeException error) {
+                return Futures.failed(error);
+            }
             JsonNode listed = result.get("tools");
             if (listed == null || !listed.isArray()) {
                 return Futures.failed(protocolError(
@@ -365,12 +547,12 @@ public final class StdioMcpClient implements McpClient {
             JsonNode next = result.get("nextCursor");
             if (next == null || next.isNull() || next.asText("").isEmpty()) {
                 return CompletableFuture.completedFuture(
-                    Collections.unmodifiableList(
-                        new ArrayList<McpToolDefinition>(tools)
-                    )
+                    catalog.toCatalog(tools)
                 );
             }
-            return listToolPage(next.asText(), page + 1, tools, names);
+            return listToolPage(
+                next.asText(), page + 1, tools, names, catalog
+            );
         });
     }
 
@@ -382,7 +564,14 @@ public final class StdioMcpClient implements McpClient {
         if (schema == null || !schema.isObject()) {
             throw protocolError(
                 "MCP Tool '" + definition.path("name").asText("?")
-                    + "' must have an object inputSchema"
+                + "' must have an object inputSchema"
+            );
+        }
+        if (initializeResult != null && initializeResult.isStateless()
+                && !"object".equals(schema.path("type").asText())) {
+            throw protocolError(
+                "MCP 2026 Tool '" + definition.path("name").asText("?")
+                    + "' inputSchema must declare type=object"
             );
         }
         JsonNode outputSchema = definition.get("outputSchema");
@@ -409,7 +598,8 @@ public final class StdioMcpClient implements McpClient {
             throw protocolError("initialize result must be a JSON object");
         }
         String negotiated = result.path("protocolVersion").asText("");
-        if (!supportedProtocolVersions.contains(negotiated)) {
+        if (!supportedProtocolVersions.contains(negotiated)
+                || LATEST_PROTOCOL_VERSION.equals(negotiated)) {
             throw new McpClientException(
                 "MCP_PROTOCOL_VERSION_UNSUPPORTED",
                 "MCP server selected unsupported protocol version '"
@@ -451,6 +641,274 @@ public final class StdioMcpClient implements McpClient {
         );
     }
 
+    private McpInitializeResult parseDiscover(JsonNode result) {
+        if (result == null || !result.isObject()) {
+            throw protocolError("server/discover result must be a JSON object");
+        }
+        requireResultType(result, "server/discover", true);
+        JsonNode versionsNode = result.get("supportedVersions");
+        if (versionsNode == null || !versionsNode.isArray()
+                || versionsNode.size() == 0) {
+            throw protocolError(
+                "server/discover must contain supportedVersions"
+            );
+        }
+        List<String> versions = new ArrayList<String>();
+        Set<String> unique = new LinkedHashSet<String>();
+        for (JsonNode version : versionsNode) {
+            if (!version.isTextual() || version.asText().trim().isEmpty()) {
+                throw protocolError(
+                    "server/discover supportedVersions must contain strings"
+                );
+            }
+            if (unique.add(version.asText())) {
+                versions.add(version.asText());
+            }
+        }
+        if (!unique.contains(LATEST_PROTOCOL_VERSION)
+                || !supportedProtocolVersions.contains(LATEST_PROTOCOL_VERSION)) {
+            throw new McpClientException(
+                "MCP_PROTOCOL_VERSION_UNSUPPORTED",
+                "MCP server does not support stateless protocol "
+                    + LATEST_PROTOCOL_VERSION + "; server versions are "
+                    + versions,
+                false
+            );
+        }
+
+        JsonNode capabilities = result.get("capabilities");
+        validateCapabilities(capabilities, "server/discover");
+        CacheHint cache = parseCacheHint(result, "server/discover");
+        JsonNode info = result.path("_meta").get(
+            "io.modelcontextprotocol/serverInfo"
+        );
+        McpServerInfo serverInfo = info != null && info.isObject()
+            ? parseServerInfo(info, "server/discover")
+            : new McpServerInfo("mcp-server", "", "");
+        return new McpInitializeResult(
+            LATEST_PROTOCOL_VERSION,
+            serverInfo,
+            capabilities.toString(),
+            result.path("instructions").asText(""),
+            capabilities.has("tools"),
+            true,
+            versions,
+            cache.ttlMillis,
+            cache.scope
+        );
+    }
+
+    private void validateCapabilities(JsonNode capabilities, String method) {
+        if (capabilities == null || !capabilities.isObject()) {
+            throw protocolError(method + " result must contain capabilities");
+        }
+        if (capabilities.has("tools")
+                && !capabilities.get("tools").isObject()) {
+            throw protocolError(method + " tools capability must be an object");
+        }
+    }
+
+    private McpServerInfo parseServerInfo(JsonNode info, String method) {
+        try {
+            return new McpServerInfo(
+                info.path("name").asText(null),
+                info.path("version").asText(""),
+                info.path("title").asText("")
+            );
+        } catch (RuntimeException error) {
+            throw protocolError(method + " serverInfo is invalid: "
+                + error.getMessage(), error);
+        }
+    }
+
+    private McpInputRequired parseInputRequired(String toolName,
+                                                 int round,
+                                                 JsonNode result) {
+        JsonNode requests = result.get("inputRequests");
+        JsonNode state = result.get("requestState");
+        if (requests != null && !requests.isObject()) {
+            throw protocolError(
+                "tools/call inputRequests must be a JSON object"
+            );
+        }
+        if (state != null && !state.isTextual()) {
+            throw protocolError("tools/call requestState must be a string");
+        }
+        if (requests == null && state == null) {
+            throw protocolError(
+                "tools/call input_required result must contain inputRequests "
+                    + "or requestState"
+            );
+        }
+        return new McpInputRequired(
+            toolName,
+            round,
+            requests == null ? "{}" : requests.toString(),
+            state == null ? "" : state.asText(),
+            result.toString()
+        );
+    }
+
+    private String resultType(JsonNode result, String method) {
+        if (result == null || !result.isObject()) {
+            throw protocolError(method + " result must be a JSON object");
+        }
+        JsonNode type = result.get("resultType");
+        if (type == null || type.isNull()) {
+            if (initializeResult != null && initializeResult.isStateless()) {
+                throw protocolError(
+                    method + " result must contain resultType for MCP "
+                        + LATEST_PROTOCOL_VERSION
+                );
+            }
+            return "complete";
+        }
+        if (!type.isTextual() || type.asText().trim().isEmpty()) {
+            throw protocolError(method + " resultType must be a string");
+        }
+        return type.asText();
+    }
+
+    private void requireCompleteResult(JsonNode result, String method) {
+        requireResultType(
+            result,
+            method,
+            initializeResult != null && initializeResult.isStateless()
+        );
+    }
+
+    private void requireResultType(JsonNode result,
+                                   String method,
+                                   boolean required) {
+        if (result == null || !result.isObject()) {
+            throw protocolError(method + " result must be a JSON object");
+        }
+        JsonNode type = result.get("resultType");
+        if (type == null || type.isNull()) {
+            if (required) {
+                throw protocolError(
+                    method + " result must contain resultType for MCP "
+                        + LATEST_PROTOCOL_VERSION
+                );
+            }
+            return;
+        }
+        if (!type.isTextual() || !"complete".equals(type.asText())) {
+            throw unsupportedResultType(method, type.asText(""));
+        }
+    }
+
+    private CacheHint parseCacheHint(JsonNode result, String method) {
+        JsonNode ttl = result.get("ttlMs");
+        JsonNode scope = result.get("cacheScope");
+        if (ttl == null || !ttl.isIntegralNumber()
+                || !ttl.canConvertToLong() || ttl.longValue() < 0) {
+            throw protocolError(
+                method + " result must contain a non-negative integer ttlMs"
+            );
+        }
+        if (scope == null || !scope.isTextual()
+                || !"public".equals(scope.asText())
+                    && !"private".equals(scope.asText())) {
+            throw protocolError(
+                method + " result cacheScope must be public or private"
+            );
+        }
+        return new CacheHint(ttl.longValue(), scope.asText());
+    }
+
+    private McpClientException unsupportedResultType(String method,
+                                                     String type) {
+        return new McpClientException(
+            "MCP_RESULT_TYPE_UNSUPPORTED",
+            "MCP request '" + method + "' returned unsupported resultType '"
+                + type + "'",
+            false
+        );
+    }
+
+    private McpClientException inputHandlerError(Throwable error) {
+        return new McpClientException(
+            "MCP_INPUT_HANDLER_FAILED",
+            "MCP input handler failed: " + message(error),
+            false,
+            error
+        );
+    }
+
+    private boolean isRecognizedModernError(Throwable error) {
+        McpClientException mcp = find(error, McpClientException.class);
+        if (mcp == null || mcp.getRpcCode() == null) return false;
+        int rpcCode = mcp.getRpcCode();
+        return rpcCode == -32020 || rpcCode == -32021 || rpcCode == -32022;
+    }
+
+    private String legacyProtocolVersion() {
+        if (!LATEST_PROTOCOL_VERSION.equals(protocolVersion)) {
+            return protocolVersion;
+        }
+        for (String candidate : supportedProtocolVersions) {
+            if (!LATEST_PROTOCOL_VERSION.equals(candidate)) {
+                return candidate;
+            }
+        }
+        throw new McpClientException(
+            "MCP_LEGACY_VERSION_UNAVAILABLE",
+            "No legacy MCP protocol version is configured",
+            false
+        );
+    }
+
+    private void attachRequestMetaIfStateless(ObjectNode params) {
+        McpInitializeResult prepared = initializeResult;
+        if (prepared != null && prepared.isStateless()) {
+            attachRequestMeta(params, prepared.getProtocolVersion());
+        }
+    }
+
+    private void attachRequestMeta(ObjectNode params, String version) {
+        ObjectNode meta = mapper.createObjectNode();
+        meta.put("io.modelcontextprotocol/protocolVersion", version);
+        ObjectNode clientInfo = meta.putObject(
+            "io.modelcontextprotocol/clientInfo"
+        );
+        clientInfo.put("name", clientName);
+        clientInfo.put("version", clientVersion);
+        meta.set(
+            "io.modelcontextprotocol/clientCapabilities",
+            clientCapabilities.deepCopy()
+        );
+        params.set("_meta", meta);
+    }
+
+    private ObjectNode parseObject(String json, String name) {
+        try {
+            JsonNode parsed = mapper.readTree(json == null ? "" : json);
+            if (parsed == null || !parsed.isObject()) {
+                throw new IllegalArgumentException(name + " must be a JSON object");
+            }
+            return (ObjectNode) parsed;
+        } catch (IOException error) {
+            throw new IllegalArgumentException(
+                name + " is not valid JSON: " + error.getMessage(), error
+            );
+        }
+    }
+
+    private static String abbreviate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) return value;
+        return value.substring(0, maxLength - 3) + "...";
+    }
+
+    private static <T extends Throwable> T find(Throwable error, Class<T> type) {
+        Throwable current = error;
+        while (current != null) {
+            if (type.isInstance(current)) return type.cast(current);
+            current = current.getCause();
+        }
+        return null;
+    }
+
     private CompletableFuture<JsonNode> request(String method,
                                                  ObjectNode params,
                                                  boolean requireInitialized) {
@@ -478,7 +936,7 @@ public final class StdioMcpClient implements McpClient {
                         + requestTimeoutMillis + " ms",
                     true
                 ));
-                if (!"initialize".equals(method)) {
+                if (shouldSendCancellation(method)) {
                     sendCancellation(numericId, "client request timeout");
                 }
             }
@@ -488,7 +946,7 @@ public final class StdioMcpClient implements McpClient {
             if (request.future.isCancelled()
                     && pending.remove(id, request)) {
                 request.markCancelled();
-                if (!"initialize".equals(method)) {
+                if (shouldSendCancellation(method)) {
                     sendCancellation(numericId, "client request cancelled");
                 }
             }
@@ -507,6 +965,15 @@ public final class StdioMcpClient implements McpClient {
             }
         }
         return request.future;
+    }
+
+    private boolean shouldSendCancellation(String method) {
+        // AUTO discovery failure synchronously restarts the child process for
+        // legacy negotiation. Avoid racing a cancellation for the old probe
+        // into the replacement process.
+        return !"initialize".equals(method)
+            && !(protocolMode == McpProtocolMode.AUTO
+                && "server/discover".equals(method));
     }
 
     private void sendCancellation(long requestId, String reason) {
@@ -546,18 +1013,64 @@ public final class StdioMcpClient implements McpClient {
             processBuilder.directory(workingDirectory);
         }
         processBuilder.environment().putAll(environment);
-        process = processBuilder.start();
-        writer = new BufferedWriter(new OutputStreamWriter(
-            process.getOutputStream(), StandardCharsets.UTF_8
-        ));
+        final Process started = processBuilder.start();
+        final BufferedWriter startedWriter = new BufferedWriter(
+            new OutputStreamWriter(
+                started.getOutputStream(), StandardCharsets.UTF_8
+            )
+        );
+        process = started;
+        writer = startedWriter;
         Thread stdout = daemonFactory("agent-mcp-stdout").newThread(
-            () -> stdoutLoop(process.getInputStream())
+            () -> stdoutLoop(started.getInputStream(), started)
         );
         Thread stderr = daemonFactory("agent-mcp-stderr").newThread(
-            () -> stderrLoop(process.getErrorStream())
+            () -> stderrLoop(started.getErrorStream(), started)
         );
         stdout.start();
         stderr.start();
+    }
+
+    private void restartProcess() throws IOException {
+        final Process previous;
+        final BufferedWriter previousWriter;
+        synchronized (lifecycleLock) {
+            if (closed) throw new IOException("MCP client is closed");
+            previous = process;
+            previousWriter = writer;
+            process = null;
+            writer = null;
+        }
+        stopProcess(previous, previousWriter);
+        synchronized (stderrLock) {
+            stderrTail.setLength(0);
+        }
+        synchronized (lifecycleLock) {
+            if (closed) throw new IOException("MCP client is closed");
+            startProcess();
+        }
+    }
+
+    private void stopProcess(Process target, BufferedWriter targetWriter) {
+        if (targetWriter != null) {
+            try {
+                targetWriter.close();
+            } catch (IOException ignored) {
+                // Process termination below is the fallback.
+            }
+        }
+        if (target == null) return;
+        try {
+            if (!target.waitFor(shutdownTimeoutMillis, TimeUnit.MILLISECONDS)) {
+                target.destroy();
+                if (!target.waitFor(shutdownTimeoutMillis, TimeUnit.MILLISECONDS)) {
+                    target.destroyForcibly();
+                }
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            target.destroyForcibly();
+        }
     }
 
     private void send(JsonNode message) {
@@ -577,7 +1090,7 @@ public final class StdioMcpClient implements McpClient {
         }
     }
 
-    private void stdoutLoop(InputStream input) {
+    private void stdoutLoop(InputStream input, Process owner) {
         try {
             String line;
             while ((line = readUtf8Line(input, maxMessageBytes)) != null) {
@@ -586,16 +1099,16 @@ public final class StdioMcpClient implements McpClient {
                 }
                 handleIncoming(mapper.readTree(line));
             }
-            if (!closed) {
+            if (!closed && process == owner) {
                 failPending(transportError("MCP server closed stdout", null));
-                close();
+                if (process == owner) close();
             }
         } catch (Throwable error) {
-            if (!closed) {
+            if (!closed && process == owner) {
                 failPending(transportError(
                     "MCP stdio reader failed: " + message(error), error
                 ));
-                close();
+                if (process == owner) close();
             }
         }
     }
@@ -642,15 +1155,15 @@ public final class StdioMcpClient implements McpClient {
         // Server notifications are intentionally ignored in the first client.
     }
 
-    private void stderrLoop(InputStream input) {
+    private void stderrLoop(InputStream input, Process owner) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                 input, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                appendStderr(line + '\n');
+                if (process == owner) appendStderr(line + '\n');
             }
         } catch (IOException error) {
-            if (!closed) {
+            if (!closed && process == owner) {
                 appendStderr("[stderr capture failed: " + message(error) + "]\n");
             }
         }
@@ -742,6 +1255,35 @@ public final class StdioMcpClient implements McpClient {
         };
     }
 
+    private static final class CacheHint {
+        private final long ttlMillis;
+        private final String scope;
+
+        private CacheHint(long ttlMillis, String scope) {
+            this.ttlMillis = ttlMillis;
+            this.scope = scope;
+        }
+    }
+
+    private static final class CatalogAccumulator {
+        private long ttlMillis = Long.MAX_VALUE;
+        private String scope = "public";
+        private boolean recorded;
+
+        private void record(CacheHint hint) {
+            recorded = true;
+            ttlMillis = Math.min(ttlMillis, hint.ttlMillis);
+            if ("private".equals(hint.scope)) scope = "private";
+        }
+
+        private McpToolCatalog toCatalog(List<McpToolDefinition> tools) {
+            if (!recorded) return McpToolCatalog.uncached(tools);
+            return new McpToolCatalog(
+                tools, ttlMillis, scope, System.currentTimeMillis()
+            );
+        }
+    }
+
     private static final class PendingRequest {
         private final String method;
         private final CompletableFuture<JsonNode> future =
@@ -796,8 +1338,12 @@ public final class StdioMcpClient implements McpClient {
         private String protocolVersion = LATEST_PROTOCOL_VERSION;
         private final Set<String> supportedProtocolVersions =
             new LinkedHashSet<String>(DEFAULT_SUPPORTED_VERSIONS);
+        private McpProtocolMode protocolMode = McpProtocolMode.AUTO;
         private String clientName = "agent-sdk";
         private String clientVersion = "0.1.0-SNAPSHOT";
+        private String clientCapabilitiesJson = "{}";
+        private McpInputHandler inputHandler;
+        private int maxInputRounds = 4;
 
         private Builder(String command) {
             argument(requireText(command, "command"));
@@ -870,6 +1416,8 @@ public final class StdioMcpClient implements McpClient {
         public Builder protocolVersion(String preferred,
                                        String... additionallySupported) {
             this.protocolVersion = requireText(preferred, "protocolVersion");
+            this.protocolMode = LATEST_PROTOCOL_VERSION.equals(preferred)
+                ? McpProtocolMode.STATELESS : McpProtocolMode.LEGACY;
             this.supportedProtocolVersions.clear();
             this.supportedProtocolVersions.add(this.protocolVersion);
             if (additionallySupported != null) {
@@ -882,13 +1430,50 @@ public final class StdioMcpClient implements McpClient {
             return this;
         }
 
+        public Builder protocolMode(McpProtocolMode mode) {
+            this.protocolMode = java.util.Objects.requireNonNull(mode, "mode");
+            return this;
+        }
+
         public Builder clientInfo(String name, String version) {
             this.clientName = requireText(name, "client name");
             this.clientVersion = requireText(version, "client version");
             return this;
         }
 
+        public Builder clientCapabilities(String capabilitiesJson) {
+            this.clientCapabilitiesJson = requireText(
+                capabilitiesJson, "clientCapabilities"
+            );
+            return this;
+        }
+
+        public Builder inputHandler(McpInputHandler handler) {
+            this.inputHandler = java.util.Objects.requireNonNull(
+                handler, "handler"
+            );
+            return this;
+        }
+
+        public Builder maxInputRounds(int maxInputRounds) {
+            if (maxInputRounds < 1) {
+                throw new IllegalArgumentException(
+                    "maxInputRounds must be positive"
+                );
+            }
+            this.maxInputRounds = maxInputRounds;
+            return this;
+        }
+
         public StdioMcpClient build() {
+            if (protocolMode == McpProtocolMode.STATELESS
+                    && !supportedProtocolVersions.contains(
+                        LATEST_PROTOCOL_VERSION)) {
+                throw new IllegalArgumentException(
+                    "STATELESS mode requires protocol "
+                        + LATEST_PROTOCOL_VERSION
+                );
+            }
             return new StdioMcpClient(this);
         }
 

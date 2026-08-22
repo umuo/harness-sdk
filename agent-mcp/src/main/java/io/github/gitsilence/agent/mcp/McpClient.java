@@ -5,14 +5,19 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Provider-neutral MCP client boundary. Implementations own one MCP session.
- * The first operation may initialize the session lazily.
+ * Provider-neutral MCP client boundary. Implementations prepare protocol state
+ * lazily; for stateless MCP, initialize() performs discovery rather than the
+ * removed wire-level initialize handshake.
  */
 public interface McpClient extends AutoCloseable {
 
     CompletableFuture<McpInitializeResult> initialize();
 
     CompletableFuture<List<McpToolDefinition>> listTools();
+
+    default CompletableFuture<McpToolCatalog> listToolCatalog() {
+        return listTools().thenApply(McpToolCatalog::uncached);
+    }
 
     CompletableFuture<McpCallToolResult> callTool(
         String toolName,
