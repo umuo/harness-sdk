@@ -88,7 +88,8 @@ WorkspaceTools workspace = WorkspaceTools.builder(Paths.get("."))
     .build();
 
 Agent agent = Agent.builder()
-    .skill(workspace.asSkill())
+    .instructions(workspace.getInstructions())
+    .tools(workspace.getTools())
     .toolResultPolicy(new BoundedToolResultPolicy(
         32 * 1024, 1000, outputDirectory
     ))

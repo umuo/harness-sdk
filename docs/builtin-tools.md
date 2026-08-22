@@ -25,12 +25,14 @@ WorkspaceTools workspace = WorkspaceTools.builder(Paths.get("."))
 Agent codingAgent = Agent.builder()
     .name("coding-agent")
     .model(chatModel)
-    .skill(workspace.asSkill())
+    .instructions(workspace.getInstructions())
+    .tools(workspace.getTools())
     .build();
 ```
 
 `bash` is disabled unless explicitly enabled. The file and search Tools are
-registered by default.
+included in `getTools()`. `WorkspaceTools` is a Tool set, not an Agent Skill;
+its recommended instructions are explicitly composed into the Agent.
 
 ## Tool contracts
 

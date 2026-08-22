@@ -266,7 +266,8 @@ class WorkspaceToolsTest {
             .name("coding-agent")
             .description("coding-agent")
             .model(model)
-            .skill(tools.asSkill())
+            .instructions(tools.getInstructions())
+            .tools(tools.getTools())
             .toolResultPolicy(new BoundedToolResultPolicy(
                 256, 5, outputDirectory
             ))
@@ -457,7 +458,8 @@ class WorkspaceToolsTest {
             .name("coding-agent")
             .description("coding-agent")
             .model(model)
-            .skill(tools.asSkill())
+            .instructions(tools.getInstructions())
+            .tools(tools.getTools())
             .maxSteps(10)
             .build();
     }

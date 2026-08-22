@@ -8,6 +8,10 @@ import io.github.gitsilence.agent.plugin.ToolInterceptor;
 import io.github.gitsilence.agent.runtime.AgentRunner;
 import io.github.gitsilence.agent.runtime.TerminationCondition;
 import io.github.gitsilence.agent.skill.Skill;
+import io.github.gitsilence.agent.skill.SkillLoadTool;
+import io.github.gitsilence.agent.skill.SkillLoader;
+import io.github.gitsilence.agent.skill.SkillPromptFormatter;
+import io.github.gitsilence.agent.skill.SkillRegistry;
 import io.github.gitsilence.agent.tool.AnnotatedTools;
 import io.github.gitsilence.agent.tool.BoundedToolResultPolicy;
 import io.github.gitsilence.agent.tool.DefaultToolRegistry;
@@ -17,6 +21,7 @@ import io.github.gitsilence.agent.tool.ToolExecutionMode;
 import io.github.gitsilence.agent.tool.ToolResultPolicy;
 
 import java.time.Duration;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -70,6 +75,14 @@ public final class AgentBuilder {
         return this;
     }
 
+    public AgentBuilder tools(Iterable<? extends Tool> tools) {
+        Objects.requireNonNull(tools, "tools");
+        for (Tool tool : tools) {
+            tool(tool);
+        }
+        return this;
+    }
+
     public AgentBuilder tool(Agent agent) {
         return tool(Objects.requireNonNull(agent, "agent").asTool());
     }
@@ -82,6 +95,36 @@ public final class AgentBuilder {
     public AgentBuilder skill(Skill skill) {
         skills.add(Objects.requireNonNull(skill, "skill"));
         return this;
+    }
+
+    public AgentBuilder skill(Path skillDirectoryOrFile) {
+        return skill(SkillLoader.load(skillDirectoryOrFile));
+    }
+
+    public AgentBuilder skills(Iterable<? extends Skill> skills) {
+        Objects.requireNonNull(skills, "skills");
+        for (Skill skill : skills) {
+            skill(skill);
+        }
+        return this;
+    }
+
+    /**
+     * Recursively discovers Skills and fails fast when any SKILL.md is invalid.
+     * Use SkillLoader.discover directly when partial loading is preferred.
+     */
+    public AgentBuilder skillsFrom(Path root) {
+        SkillLoader.Discovery discovery = SkillLoader.discover(root);
+        if (discovery.hasDiagnostics()) {
+            StringBuilder message = new StringBuilder(
+                "Cannot register Skills from " + root + ':'
+            );
+            for (SkillLoader.Diagnostic diagnostic : discovery.getDiagnostics()) {
+                message.append("\n- ").append(diagnostic.getMessage());
+            }
+            throw new IllegalArgumentException(message.toString());
+        }
+        return skills(discovery.getSkills());
     }
 
     public AgentBuilder plugin(AgentPlugin plugin) {
@@ -133,22 +176,21 @@ public final class AgentBuilder {
         AgentDescriptor descriptor = new AgentDescriptor(name, description);
         Objects.requireNonNull(model, "model");
 
+        SkillRegistry skillRegistry = SkillRegistry.of(skills);
         StringBuilder composedInstructions = new StringBuilder(instructions);
+        String skillPrompt = SkillPromptFormatter.format(skillRegistry);
+        if (!skillPrompt.isEmpty()) {
+            if (composedInstructions.length() > 0) {
+                composedInstructions.append("\n\n");
+            }
+            composedInstructions.append(skillPrompt);
+        }
         DefaultToolRegistry.Builder registry = DefaultToolRegistry.builder();
         for (Tool tool : tools) {
             registry.register(tool);
         }
-        for (Skill skill : skills) {
-            if (!skill.getInstructions().trim().isEmpty()) {
-                if (composedInstructions.length() > 0) {
-                    composedInstructions.append("\n\n");
-                }
-                composedInstructions.append("## Skill: ")
-                    .append(skill.getName())
-                    .append('\n')
-                    .append(skill.getInstructions());
-            }
-            registry.registerAll(skill.getTools());
+        if (!skillRegistry.isEmpty()) {
+            registry.register(new SkillLoadTool(skillRegistry));
         }
 
         List<ModelInterceptor> modelInterceptors =
@@ -175,6 +217,7 @@ public final class AgentBuilder {
             model,
             modelOptions,
             registry.build(),
+            skillRegistry,
             maxSteps,
             toolExecutionMode,
             toolErrorPolicy,

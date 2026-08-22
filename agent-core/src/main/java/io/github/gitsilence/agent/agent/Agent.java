@@ -9,6 +9,7 @@ import io.github.gitsilence.agent.runtime.AgentRunner;
 import io.github.gitsilence.agent.runtime.AgentEventListener;
 import io.github.gitsilence.agent.runtime.Futures;
 import io.github.gitsilence.agent.runtime.TerminationCondition;
+import io.github.gitsilence.agent.skill.SkillRegistry;
 import io.github.gitsilence.agent.tool.Tool;
 import io.github.gitsilence.agent.tool.ToolErrorPolicy;
 import io.github.gitsilence.agent.tool.ToolExecutionMode;
@@ -30,6 +31,7 @@ public final class Agent {
     private final ChatModel model;
     private final ModelOptions modelOptions;
     private final ToolRegistry toolRegistry;
+    private final SkillRegistry skillRegistry;
     private final int maxSteps;
     private final ToolExecutionMode toolExecutionMode;
     private final ToolErrorPolicy toolErrorPolicy;
@@ -46,6 +48,7 @@ public final class Agent {
           ChatModel model,
           ModelOptions modelOptions,
           ToolRegistry toolRegistry,
+          SkillRegistry skillRegistry,
           int maxSteps,
           ToolExecutionMode toolExecutionMode,
           ToolErrorPolicy toolErrorPolicy,
@@ -61,6 +64,7 @@ public final class Agent {
         this.model = model;
         this.modelOptions = modelOptions;
         this.toolRegistry = toolRegistry;
+        this.skillRegistry = skillRegistry;
         this.maxSteps = maxSteps;
         this.toolExecutionMode = toolExecutionMode;
         this.toolErrorPolicy = toolErrorPolicy;
@@ -126,6 +130,7 @@ public final class Agent {
     public ChatModel getModel() { return model; }
     public ModelOptions getModelOptions() { return modelOptions; }
     public ToolRegistry getToolRegistry() { return toolRegistry; }
+    public SkillRegistry getSkillRegistry() { return skillRegistry; }
     public int getMaxSteps() { return maxSteps; }
     public ToolExecutionMode getToolExecutionMode() { return toolExecutionMode; }
     public ToolErrorPolicy getToolErrorPolicy() { return toolErrorPolicy; }

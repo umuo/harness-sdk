@@ -1,6 +1,5 @@
 package io.github.gitsilence.agent.tools.builtin;
 
-import io.github.gitsilence.agent.skill.Skill;
 import io.github.gitsilence.agent.tool.Tool;
 import io.github.gitsilence.agent.tool.ToolOutputStore;
 
@@ -83,22 +82,14 @@ public final class WorkspaceTools {
         return builder(Paths.get(root));
     }
 
-    public Skill asSkill() {
-        Skill.Builder skill = Skill.builder()
-            .name("workspace-tools")
-            .instructions(
-                "Use read_file instead of shell commands to inspect text files; "
-                    + "continue large files with offset and limit. Use glob instead "
-                    + "of shell find to discover files. Read an existing file before "
-                    + "write_file or edit, and prefer edit for targeted changes."
-                    + (bash == null ? "" : " Check every bash exit-code, stderr, "
-                        + "timeout and truncation marker before continuing.")
-            )
-            .metadata("workspaceRoot", root.toString());
-        for (Tool tool : tools) {
-            skill.tool(tool);
-        }
-        return skill.build();
+    /** Recommended instructions to compose with an Agent using this Tool set. */
+    public String getInstructions() {
+        return "Use read_file instead of shell commands to inspect text files; "
+            + "continue large files with offset and limit. Use glob instead "
+            + "of shell find to discover files. Read an existing file before "
+            + "write_file or edit, and prefer edit for targeted changes."
+            + (bash == null ? "" : " Check every bash exit-code, stderr, "
+                + "timeout and truncation marker before continuing.");
     }
 
     public Path getRoot() { return root; }

@@ -40,6 +40,8 @@ AgentRunner -- creates --> AgentState
   annotation-scanned methods offer a compact alternative. Raw definitions are
   retained only as an escape hatch.
 - `AgentTool` delegates a tool call to another Agent with a fresh state.
+- `SkillRegistry` holds lightweight metadata for file-backed Agent Skills;
+  `skill_load` brings instructions and references into a Turn only on demand.
 
 ## State ownership
 
@@ -70,6 +72,31 @@ The runtime intentionally contains only these routing decisions:
 There is no public node API, edge DSL, graph compiler or checkpoint protocol.
 Internal model/tool phases can evolve without committing the public API to a
 workflow abstraction.
+
+## Progressive Skills
+
+Skills are portable directories headed by `SKILL.md`, not Java Tool bundles.
+When an Agent is built, only each Skill's name, description and location are
+added to the system prompt. The builder automatically registers one
+`skill_load` Tool. A matching task therefore follows the normal fixed loop:
+
+```text
+Skill metadata in system prompt
+          |
+          v
+Model calls skill_load(name, resource?)
+          |
+          v
+Instructions/reference become a Tool result
+          |
+          v
+Next model step follows the loaded guidance
+```
+
+There is no Skill router or separate execution engine. `allowed-tools` is
+descriptive metadata and never registers or grants a Java Tool. Scripts are
+ordinary Skill resources and execute only through an explicitly registered
+Tool such as `bash`.
 
 ## Turn, step and termination semantics
 

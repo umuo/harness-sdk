@@ -28,6 +28,7 @@ mvn clean verify
 - [Architecture](docs/architecture.md)
 - [API guide](docs/api-guide.md)
 - [Tool authoring](docs/tools.md)
+- [Agent Skills](docs/skills.md)
 - [Model providers and streaming](docs/model-providers.md)
 - [Lifecycle events and plugins](docs/plugins.md)
 - [Tool results, preservation and errors](docs/tool-results.md)

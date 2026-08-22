@@ -1,75 +1,58 @@
 package io.github.gitsilence.agent.skill;
 
-import io.github.gitsilence.agent.tool.Tool;
-
-import java.util.ArrayList;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Immutable metadata for a file-backed Agent Skill.
+ *
+ * <p>The descriptor intentionally does not contain instructions or executable
+ * Tool instances. Instructions remain in {@code SKILL.md} until the model
+ * activates the Skill.</p>
+ */
 public final class Skill {
 
     private final String name;
-    private final String instructions;
-    private final List<Tool> tools;
-    private final Map<String, Object> metadata;
+    private final String description;
+    private final Path rootDirectory;
+    private final Path skillFile;
+    private final String license;
+    private final String compatibility;
+    private final Map<String, String> metadata;
+    private final List<String> allowedTools;
 
-    private Skill(Builder builder) {
-        this.name = requireText(builder.name, "name");
-        this.instructions = builder.instructions == null ? "" : builder.instructions;
-        this.tools = Collections.unmodifiableList(new ArrayList<Tool>(builder.tools));
+    Skill(String name,
+          String description,
+          Path rootDirectory,
+          Path skillFile,
+          String license,
+          String compatibility,
+          Map<String, String> metadata,
+          List<String> allowedTools) {
+        this.name = Objects.requireNonNull(name, "name");
+        this.description = Objects.requireNonNull(description, "description");
+        this.rootDirectory = Objects.requireNonNull(rootDirectory, "rootDirectory");
+        this.skillFile = Objects.requireNonNull(skillFile, "skillFile");
+        this.license = license;
+        this.compatibility = compatibility;
         this.metadata = Collections.unmodifiableMap(
-            new LinkedHashMap<String, Object>(builder.metadata)
+            new LinkedHashMap<String, String>(metadata)
+        );
+        this.allowedTools = Collections.unmodifiableList(
+            new java.util.ArrayList<String>(allowedTools)
         );
     }
 
-    public static Builder builder() {
-        return new Builder();
-    }
-
     public String getName() { return name; }
-    public String getInstructions() { return instructions; }
-    public List<Tool> getTools() { return tools; }
-    public Map<String, Object> getMetadata() { return metadata; }
-
-    private static String requireText(String value, String name) {
-        Objects.requireNonNull(value, name);
-        if (value.trim().isEmpty()) {
-            throw new IllegalArgumentException(name + " must not be blank");
-        }
-        return value;
-    }
-
-    public static final class Builder {
-        private String name;
-        private String instructions;
-        private final List<Tool> tools = new ArrayList<Tool>();
-        private final Map<String, Object> metadata = new LinkedHashMap<String, Object>();
-
-        public Builder name(String name) {
-            this.name = name;
-            return this;
-        }
-
-        public Builder instructions(String instructions) {
-            this.instructions = instructions;
-            return this;
-        }
-
-        public Builder tool(Tool tool) {
-            tools.add(Objects.requireNonNull(tool, "tool"));
-            return this;
-        }
-
-        public Builder metadata(String name, Object value) {
-            metadata.put(name, value);
-            return this;
-        }
-
-        public Skill build() {
-            return new Skill(this);
-        }
-    }
+    public String getDescription() { return description; }
+    public Path getRootDirectory() { return rootDirectory; }
+    public Path getSkillFile() { return skillFile; }
+    public String getLicense() { return license; }
+    public String getCompatibility() { return compatibility; }
+    public Map<String, String> getMetadata() { return metadata; }
+    public List<String> getAllowedTools() { return allowedTools; }
 }

@@ -11,6 +11,8 @@
 - Sequential and parallel tool batches.
 - Maximum steps, custom termination conditions and error policies.
 - Agent-as-Tool with child-state isolation and recursion guards.
+- File-backed Agent Skills with standard `SKILL.md` metadata, recursive
+  discovery and progressive instruction/resource loading.
 - A stateful, action-based Todo Tool scoped to one Agent Turn.
 - Java 8 JSON HTTP and SSE transport abstraction.
 - Streaming and non-streaming OpenAI-compatible Chat Completions provider.
@@ -37,7 +39,7 @@
 - RAG and vector stores.
 - MCP.
 - Human-in-the-loop runtime.
-- Dynamic Skill routing.
+- A semantic or rule-based Skill router; the model selects from descriptions.
 - Distributed execution.
 - Spring integration.
 
