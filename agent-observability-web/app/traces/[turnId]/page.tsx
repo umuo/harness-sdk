@@ -108,7 +108,8 @@ export default async function TraceDetail({
         </section>
       )}
 
-      <section className="detail-grid">
+      <div className="trace-layout">
+        <div className="trace-main">
         <article className="panel stat-strip">
           <DetailStat label={copy.stats.steps} value={task.stepCount} locale={locale} />
           <DetailStat label={copy.stats.modelCalls} value={task.modelCallCount} locale={locale} />
@@ -123,33 +124,7 @@ export default async function TraceDetail({
           <DetailStat label={copy.stats.outputTokens} value={task.usage.outputTokens} locale={locale} />
         </article>
 
-        <article className="panel metadata-card">
-          <div className="panel-heading compact">
-            <div>
-              <p className="eyebrow">{copy.context}</p>
-              <h2>{copy.traceMetadata}</h2>
-            </div>
-          </div>
-          <MetadataRow label={copy.taskId} value={task.taskId} />
-          <MetadataRow label={copy.traceId} value={task.traceId} />
-          <MetadataRow label={copy.entryAgent} value={task.rootAgentName} />
-          <MetadataRow
-            label={copy.participatingAgents}
-            value={task.agentNames.join(", ")}
-          />
-          <MetadataRow label={copy.agentTurns} value={String(task.turnIds.length)} />
-          <MetadataRow
-            label={copy.application}
-            value={
-              application?.name ??
-              (task.applicationName || applicationId || copy.unassignedApplication)
-            }
-          />
-          <MetadataRow label={copy.streamEvents} value={String(task.modelStreamEventCount)} />
-          <Attributes value={rootTrace.attributes} empty={copy.noResourceAttributes} />
-        </article>
-      </section>
-
+        
       <section className="panel trace-graph-panel">
         <div className="panel-heading">
           <div>
@@ -245,6 +220,36 @@ export default async function TraceDetail({
           })}
         </div>
       </section>
+        </div>
+
+        <aside className="trace-sidebar">
+          <article className="panel metadata-card">
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">{copy.context}</p>
+              <h2>{copy.traceMetadata}</h2>
+            </div>
+          </div>
+          <MetadataRow label={copy.taskId} value={task.taskId} />
+          <MetadataRow label={copy.traceId} value={task.traceId} />
+          <MetadataRow label={copy.entryAgent} value={task.rootAgentName} />
+          <MetadataRow
+            label={copy.participatingAgents}
+            value={task.agentNames.join(", ")}
+          />
+          <MetadataRow label={copy.agentTurns} value={String(task.turnIds.length)} />
+          <MetadataRow
+            label={copy.application}
+            value={
+              application?.name ??
+              (task.applicationName || applicationId || copy.unassignedApplication)
+            }
+          />
+          <MetadataRow label={copy.streamEvents} value={String(task.modelStreamEventCount)} />
+          <Attributes value={rootTrace.attributes} empty={copy.noResourceAttributes} />
+        </article>
+        </aside>
+      </div>
     </>
   );
 }
