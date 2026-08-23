@@ -1,19 +1,14 @@
-# Agent Observability
+# Agent 可观测性
 
-## Scope
+## 作用域
 
-`agent-core` includes a lightweight, provider-neutral observability Plugin. It
-turns existing lifecycle events into two useful outputs without changing Agent
-execution:
+`agent-core` 包含一个轻量级、提供商中立的可观测性插件 (Plugin)。它在不改变 Agent 执行方式的情况下，将现有的生命周期事件转换为以下有用的输出：
 
-- one immutable `AgentTrace` per completed, stopped, failed, or cancelled Turn;
-- structured input and output on every Turn, Model, and Tool span when content
-  capture is enabled;
-- a process-local `AgentMetricsSnapshot` with Turn, Step, Model, Tool, Token,
-  error, duration, active-Turn, and exporter-failure counters.
+- 每个已完成、已停止、失败或已取消的回合 (Turn) 对应一个不可变的 `AgentTrace`；
+- 当启用内容捕获时，每个回合、模型 (Model) 和工具 (Tool) 跨度 (span) 上都有结构化的输入和输出；
+- 一个进程本地的 `AgentMetricsSnapshot`，包含回合、步骤 (Step)、模型、工具、Token、错误、持续时间、活跃回合以及导出器失败的计数器。
 
-The trace hierarchy follows the fixed Agent Loop rather than inventing a
-workflow model:
+追踪的层级结构遵循固定的 Agent 循环 (Agent Loop)，而不是发明一种工作流模型：
 
 ```text
 Turn
@@ -25,28 +20,13 @@ Turn
     Model
 ```
 
-Spans are returned as a flat immutable list with `spanId` and `parentSpanId`,
-which is convenient for OpenTelemetry, logging, database, or test adapters.
-Their identifiers are opaque SDK identifiers; an exporter may translate them
-to the identifier format required by its backend.
+跨度 (Spans) 以扁平的不可变列表形式返回，包含 `spanId` 和 `parentSpanId`，这对于 OpenTelemetry、日志记录、数据库或测试适配器来说非常方便。它们的标识符是不透明的 SDK 标识符；导出器可以将它们转换为其后端所需的标识符格式。
 
-Each `AgentSpan` exposes `getInput()` and `getOutput()` separately from indexed
-attributes. For the bundled HTTP Providers, Model input and output contain the
-actual serialized request body and raw response structure. The corresponding
-provider-neutral `ModelRequest` and `ModelResponse` remain available through
-`getSdkInput()` and `getSdkOutput()`. Custom Models without a Provider exchange
-continue to expose their canonical SDK payload directly as input and output.
-Tool nodes contain parsed arguments, result content, structured errors,
-metadata, and output-file references.
+每个 `AgentSpan` 将 `getInput()` 和 `getOutput()` 与索引属性分开暴露。对于绑定的 HTTP 提供商 (Providers)，模型输入和输出包含实际序列化的请求体和原始响应结构。相应的提供商中立的 `ModelRequest` 和 `ModelResponse` 仍然可以通过 `getSdkInput()` 和 `getSdkOutput()` 获取。没有提供商交换的自定义模型继续将其规范的 SDK 负载直接作为输入和输出暴露。工具节点包含解析后的参数、结果内容、结构化错误、元数据以及输出文件引用。
 
-Observability-only summaries never appear inside Model span input or output.
-For example, message count, available Tool count, returned Tool-call count, and
-capture-omission counts use `agent.model.*` span attributes instead. The node
-inspector therefore keeps the Provider body, normalized SDK model, and indexed
-telemetry metadata separate. HTTP Headers are deliberately never copied into
-the exchange because Authorization and vendor API-key headers are sensitive.
+仅用于可观测性的摘要信息永远不会出现在模型跨度的输入或输出中。例如，消息计数、可用工具计数、返回的工具调用计数以及捕获遗漏计数使用 `agent.model.*` 跨度属性代替。因此，节点检查器将提供商的主体、标准化的 SDK 模型和索引的遥测元数据保持分离。HTTP 标头 (Headers) 刻意从不被复制到交换中，因为授权和供应商 API 密钥标头是敏感信息。
 
-## Basic usage
+## 基本用法
 
 ```java
 import io.github.gitsilence.agent.agent.Agent;
@@ -76,59 +56,42 @@ System.out.println(latest.getTraceId());
 System.out.println(metrics.getTotalTokens());
 ```
 
-`InMemoryTraceExporter` is bounded and thread-safe. When full, it removes the
-oldest trace and increments `getDroppedTraceCount()`. It is intended for unit
-tests, local diagnostics, and small embedded applications—not as a durable
-production trace store.
+`InMemoryTraceExporter` 是有界的且线程安全的。当它已满时，它会移除最旧的追踪记录并增加 `getDroppedTraceCount()` 的值。它适用于单元测试、本地诊断和小型嵌入式应用程序，而不是作为持久的生产追踪存储。
 
-## Output modes
+## 输出模式
 
-The SDK makes the observability destination explicit. The selected mode is
-available through `getMode()`:
+SDK 使可观测性的目的地变得明确。选定的模式可以通过 `getMode()` 获取：
 
-Observability is opt-in: `AgentBuilder` does not register this Plugin
-automatically. An Agent without `.plugin(observability)` performs no trace
-assembly, metrics collection, logging, or platform transport. The executable
-examples deliberately register platform observability so their real Provider,
-Tool, SubAgent, MCP, Todo, Skill, and streaming behavior can be inspected.
+可观测性是选择性加入的 (opt-in)：`AgentBuilder` 不会自动注册此插件。没有使用 `.plugin(observability)` 的 Agent 不会执行任何追踪组装、指标收集、日志记录或平台传输。可执行的示例刻意注册了平台可观测性，以便可以检查其真实的提供商、工具、子 Agent (SubAgent)、MCP、Todo、Skill 以及流式处理行为。
 
 ```java
-// No trace assembly, metrics, logging, or transport work.
+// 不进行追踪组装、指标、日志记录或传输工作。
 AgentObservability off = AgentObservability.disabled();
 
-// One versioned JSON document per completed Turn via java.util.logging.
+// 通过 java.util.logging，每个完成的回合生成一个带有版本的 JSON 文档。
 AgentObservability logs = AgentObservability.logging();
 
-// Bounded, asynchronous HTTP delivery to the bundled web platform.
+// 有界、异步的 HTTP 交付到绑定的 web 平台。
 AgentObservability platform = AgentObservability.platform(
     "http://localhost:3000/api/traces",
     System.getenv("AGENT_OBSERVABILITY_API_KEY")
 );
 
-// Application-defined destination. Metrics and trace assembly stay enabled.
+// 应用程序定义的目的地。指标和追踪组装保持启用状态。
 AgentObservability custom = AgentObservability.builder()
     .exporter(trace -> telemetryBackend.write(trace))
     .build();
 ```
 
-The `platform(...)` convenience methods enable bounded content capture so the
-trace debugger can display Model requests and responses immediately. To keep
-platform traces metadata-only, configure the transport through the Builder
-and call `.captureContent(false)`.
+`platform(...)` 便捷方法启用了有界内容捕获，因此追踪调试器可以立即显示模型的请求和响应。要使平台追踪仅保留元数据，请通过 Builder 配置传输并调用 `.captureContent(false)`。
 
-No Provider-specific observability switch is required. The Agent Loop marks
-only Model requests whose registered Plugins request exchange capture; the
-bundled HTTP Provider then attaches its exact serialized body to that response.
-Model calls made without such a Plugin retain the previous zero-capture
-behavior.
+不需要特定于提供商的可观测性开关。Agent 循环仅标记那些注册了请求交换捕获的插件的模型请求；然后绑定的 HTTP 提供商将其精确的序列化主体附加到该响应中。没有这种插件的情况下进行的模型调用，会保留以前的零捕获行为。
 
-Register exactly the chosen instance with `.plugin(observability)`. `OFF`
-returns immediately on every lifecycle event, so it has lower overhead than a
-no-op custom exporter and its local metrics remain zero.
+使用 `.plugin(observability)` 准确注册所选的实例。`OFF` 模式在每个生命周期事件上都会立即返回，因此它比空操作的自定义导出器开销更低，并且其本地指标保持为零。
 
-## Exporters
+## 导出器
 
-`AgentTraceExporter` deliberately has one small method:
+`AgentTraceExporter` 刻意只保留一个小方法：
 
 ```java
 AgentTraceExporter exporter = trace -> {
@@ -136,11 +99,9 @@ AgentTraceExporter exporter = trace -> {
 };
 ```
 
-Custom and logging export calls run after a terminal Turn event. Custom
-exporters should return quickly. Exporter exceptions are isolated from the
-Agent and counted by `AgentMetricsSnapshot.getExporterFailures()`.
+自定义和日志导出调用在终态回合事件之后运行。自定义导出器应快速返回。导出器异常与 Agent 隔离，并由 `AgentMetricsSnapshot.getExporterFailures()` 计数。
 
-`PlatformTraceExporter` supplies the bounded background queue needed for HTTP:
+`PlatformTraceExporter` 提供了 HTTP 所需的有界后台队列：
 
 ```java
 PlatformTraceExporter transport = PlatformTraceExporter.builder(
@@ -161,59 +122,39 @@ AgentObservability observability = AgentObservability.builder()
     .build();
 ```
 
-The Agent thread only offers an immutable trace to the queue. When the queue is
-full, the newest trace is dropped instead of applying backpressure to the
-Agent Loop. Transport health is available from `getAcceptedCount()`,
-`getSentCount()`, `getFailedCount()`, `getDroppedCount()`, `getQueuedCount()`,
-and `getLastError()`. HTTP 408, 429, and 5xx responses are retried; other 4xx
-responses fail immediately.
+Agent 线程仅向队列提供不可变的追踪记录。当队列已满时，最新的追踪记录将被丢弃，而不是对 Agent 循环施加背压。传输的健康状况可以通过 `getAcceptedCount()`、`getSentCount()`、`getFailedCount()`、`getDroppedCount()`、`getQueuedCount()` 和 `getLastError()` 获取。HTTP 408、429 和 5xx 响应会被重试；其他 4xx 响应会立即失败。
 
-The platform builder transfers exporter lifecycle ownership to
-`AgentObservability`. Close the shared plugin during application shutdown to
-drain its queue up to the configured shutdown timeout:
+平台构建器将导出器的生命周期所有权转移给 `AgentObservability`。在应用程序关闭期间关闭共享的插件，以在配置的关闭超时时间内排空其队列：
 
 ```java
 observability.close();
 ```
 
-For tests or a controlled checkpoint, `transport.flush(timeout)` waits for all
-currently accepted traces. Agent shutdown does not happen automatically when
-an individual Turn completes because one observability instance is normally
-shared by many Agents.
+对于测试或受控的检查点，`transport.flush(timeout)` 会等待所有当前已接受的追踪记录。Agent 的关闭不会在单个回合完成时自动发生，因为通常有多个 Agent 共享一个可观测性实例。
 
-This module does not depend on OpenTelemetry, Micrometer, Spring, or an external
-logging backend. The logging mode uses only `java.util.logging`. Adapters can
-map:
+该模块不依赖于 OpenTelemetry、Micrometer、Spring 或外部日志后端。日志记录模式仅使用 `java.util.logging`。适配器可以映射：
 
-- `AgentTrace` and `AgentSpan` to distributed traces;
-- `AgentMetricsSnapshot` to counters, gauges, and duration sums;
-- trace attributes to backend resource or span attributes.
+- 将 `AgentTrace` 和 `AgentSpan` 映射到分布式追踪；
+- 将 `AgentMetricsSnapshot` 映射到计数器、仪表盘和持续时间总和；
+- 将追踪属性映射到后端资源或跨度属性。
 
-## Metrics semantics
+## 指标语义
 
-The snapshot contains cumulative process-local values for one
-`AgentObservability` instance:
+快照包含一个 `AgentObservability` 实例的累积进程本地值：
 
-- Turns started, completed, stopped, failed, cancelled, and currently active;
-- Steps, Model calls, Tool calls, and Tool errors;
-- input, output, and total tokens reported by model providers;
-- cumulative Turn, Model, and Tool duration in nanoseconds;
-- exporter failures.
+- 已启动、已完成、已停止、失败、已取消以及当前活跃的回合；
+- 步骤、模型调用、工具调用和工具错误；
+- 模型提供商报告的输入、输出和总 token 数；
+- 累积的回合、模型和工具持续时间（以纳秒为单位）；
+- 导出器失败次数。
 
-Except for started/active Turns, values are committed when a Turn reaches a
-terminal event. A provider that does not report usage contributes zero tokens.
-Metrics are lock-free snapshots, not histograms or a persistent metrics store.
+除了已启动/活跃的回合外，其他值在回合达到终态事件时提交。不报告使用情况的提供商贡献的 token 数为零。指标是无锁快照，而不是直方图或持久的指标存储。
 
-## Content privacy
+## 内容隐私
 
-Observability remains disabled unless its Plugin is registered. Custom Builder
-and logging configurations do not capture prompts, Model responses, Tool
-arguments, Tool results, or final answers unless explicitly enabled. The
-`platform(...)` convenience methods do enable bounded content capture because
-the platform's primary purpose is request-level debugging. Use the Builder
-with `.captureContent(false)` for metadata-only platform traces.
+除非注册了其插件，否则可观测性将保持禁用状态。自定义构建器和日志记录配置不会捕获提示词、模型响应、工具参数、工具结果或最终答案，除非明确启用。`platform(...)` 便捷方法确实启用了有界内容捕获，因为平台的主要目的是请求级别的调试。使用带有 `.captureContent(false)` 的 Builder 可以获得仅含元数据的平台追踪。
 
-Captured values are bounded per text field:
+捕获的值在每个文本字段上都是有界的：
 
 ```java
 AgentObservability observability = AgentObservability.builder()
@@ -223,27 +164,13 @@ AgentObservability observability = AgentObservability.builder()
     .build();
 ```
 
-Bundled HTTP Models attach a header-free `ModelExchange` to each successful
-response and to Provider exceptions only when a registered Plugin explicitly
-requests content capture. With observability disabled or metadata-only, raw
-Provider bodies are not retained and SSE events are not accumulated. When
-content capture is enabled, JSON
-bodies retain their vendor field names and nesting while long text leaves,
-collection sizes, and nesting depth remain bounded. SSE response text is
-captured with normalized LF line endings. Every Provider response exchange is
-limited to 2 MiB before the observability field limit is applied.
-Authorization/API-key Headers are never attached, and
-query strings or URL fragments are removed from captured endpoints.
+绑定的 HTTP 模型仅在注册的插件显式请求内容捕获时，才将不包含标头的 `ModelExchange` 附加到每个成功的响应和提供商异常中。在禁用可观测性或仅保留元数据的情况下，原始提供商主体不会被保留，SSE 事件也不会累积。当启用内容捕获时，JSON 主体保留其供应商字段名称和嵌套结构，同时长文本叶子节点、集合大小和嵌套深度保持有界。SSE 响应文本以标准化的 LF 行尾进行捕获。在应用可观测性字段限制之前，每个提供商响应交换都被限制为 2 MiB。授权/API 密钥标头永远不会被附加，且查询字符串或 URL 片段将从捕获的端点中移除。
 
-Opt-in content can still contain credentials, personal data, proprietary
-prompts, or large encoded values. Apply redaction in the exporter and restrict
-backend access. Truncation protects memory and telemetry volume; it is not a
-security boundary.
+选择性加入的内容仍然可能包含凭据、个人数据、专有提示词或大型编码值。请在导出器中应用脱敏并限制后端访问。截断可保护内存和遥测数据量；它不是安全边界。
 
-## Root and SubAgent correlation
+## 根 Agent 与子 Agent 关联
 
-Every root Turn receives a `traceId` in State metadata. A caller can seed an
-external correlation identifier:
+每个根回合都会在状态元数据中接收到一个 `traceId`。调用者可以播种一个外部的关联标识符：
 
 ```java
 AgentRequest request = AgentRequest.builder()
@@ -252,9 +179,7 @@ AgentRequest request = AgentRequest.builder()
     .build();
 ```
 
-Agent-as-Tool automatically passes the trace ID, parent Turn ID, and parent
-Tool-call ID to the child. Register the same thread-safe `AgentObservability`
-instance on every participating Agent:
+将 Agent 作为工具 (Agent-as-Tool) 使用时，会自动将追踪 ID、父回合 ID 和父工具调用 ID 传递给子级。在每个参与的 Agent 上注册同一个线程安全的 `AgentObservability` 实例：
 
 ```java
 AgentObservability observability = AgentObservability.builder()
@@ -277,32 +202,15 @@ Agent supervisor = Agent.builder()
     .build();
 ```
 
-Parent and child still own separate mutable Agent States. They export separate
-Turn trace segments sharing one trace ID; the child Turn span points to the
-parent Agent-Tool span. The bundled platform treats the root Turn as one
-caller-triggered Task, groups all descendant Turn segments into one dashboard
-row, and merges their spans into one clickable call graph. The underlying
-Turn records remain separate and immutable. Task status and duration use the
-root Turn; counts and Token usage are aggregated across every participating
-Agent Turn.
+父级和子级仍然拥有独立的可变 Agent 状态。它们导出共享同一个追踪 ID 的独立回合追踪片段；子回合跨度指向父 Agent-工具跨度。绑定的平台将根回合视为一个由调用者触发的任务，将所有后代回合片段分组到一个仪表盘行中，并将它们的跨度合并到一个可点击的调用图中。底层的回合记录保持独立且不可变。任务状态和持续时间使用根回合；计数和 Token 使用量聚合所有参与的 Agent 回合。
 
-## Failure and lifecycle behavior
+## 失败与生命周期行为
 
-- normal completion produces `OK` spans;
-- termination conditions and maximum steps produce `STOPPED` Turn spans;
-- model failures and fail-fast Tool failures close all still-open spans as
-  `ERROR`;
-- reported Tool failures mark only the Tool span as `ERROR` and allow the
-  Agent Loop to recover;
-- cancellation closes unfinished spans as `CANCELLED`;
-- plugin/exporter failures never alter Agent execution.
+- 正常完成会生成 `OK` 跨度；
+- 终止条件和最大步骤会生成 `STOPPED` 回合跨度；
+- 模型失败和快速失败的工具失败会将所有仍处于打开状态的跨度作为 `ERROR` 关闭；
+- 报告的工具失败仅将工具跨度标记为 `ERROR` 并允许 Agent 循环恢复；
+- 取消操作会将未完成的跨度作为 `CANCELLED` 关闭；
+- 插件/导出器失败绝不改变 Agent 的执行。
 
-The current wire format has `schemaVersion: "3"`. Version 3 adds the actual
-Provider request/response payload plus separate `sdkInput` and `sdkOutput`
-views for the normalized Core model. It is encoded explicitly by
-`AgentTraceJsonCodec` instead of exposing Jackson's representation of Java
-classes as an accidental protocol. The bundled web service continues to read
-version 1 and 2 documents.
-Sampling, histograms,
-OpenTelemetry/vendor SDKs, and production database storage remain outside
-Core. See [Observability web platform](observability-platform.md).
+当前的传输格式使用 `schemaVersion: "3"`。版本 3 添加了实际的提供商请求/响应负载，以及针对标准化的核心模型的独立 `sdkInput` 和 `sdkOutput` 视图。它由 `AgentTraceJsonCodec` 显式编码，而不是将 Jackson 对 Java 类的表示作为意外的协议暴露出来。绑定的 web 服务继续读取版本 1 和版本 2 的文档。采样、直方图、OpenTelemetry/供应商 SDK 以及生产数据库存储仍然位于核心之外。请参阅 [可观测性 Web 平台](observability-platform.md)。

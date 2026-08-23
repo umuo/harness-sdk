@@ -1,13 +1,12 @@
-# Built-in Workspace Tools
+# 内置工作区工具
 
-The built-ins use the typed `AbstractTool<I>` / `AbstractAsyncTool<I>` APIs;
-their model-facing schemas are generated from input classes rather than kept as
-handwritten JSON strings.
+内置组件使用强类型的 `AbstractTool<I>` / `AbstractAsyncTool<I>` API；
+它们面向模型的 schema 是通过输入类生成的，而不是作为手写 JSON 字符串保留。
 
-## Module and setup
+## 模块和设置
 
-The optional `agent-tools-builtin` module contains a coding-oriented Tool suite
-without adding filesystem or process APIs to `agent-core`:
+可选的 `agent-tools-builtin` 模块包含一个面向编码的工具套件，
+而没有向 `agent-core` 中添加文件系统或进程 API：
 
 ```xml
 <dependency>
@@ -30,89 +29,62 @@ Agent codingAgent = Agent.builder()
     .build();
 ```
 
-`bash` is disabled unless explicitly enabled. The file and search Tools are
-included in `getTools()`. `WorkspaceTools` is a Tool set, not an Agent Skill;
-its recommended instructions are explicitly composed into the Agent.
+除非显式启用，否则 `bash` 默认禁用。文件和搜索工具包含在 `getTools()` 中。`WorkspaceTools` 是一个工具集，而不是一个 Agent 技能；
+建议将其指令（instructions）显式地组合到 Agent 中。
 
-## Tool contracts
+## 工具契约
 
-| Tool | Important arguments | Bounded behavior |
+| 工具 | 重要参数 | 边界行为 |
 | --- | --- | --- |
-| `read_file` | `file_path`, `offset?`, `limit?` | 1-based numbered UTF-8 windows; defaults to at most 2,000 lines, 2,000 characters per line and 50 KiB |
-| `write_file` | `file_path`, `content` | atomic create/full replacement; defaults to a 5-MiB input limit |
-| `edit` | `file_path`, `old_string`, `new_string`, `replace_all?` | exact literal replacement; unique match required unless `replace_all` is true; defaults to 5-MiB files |
-| `glob` | `pattern`, `path?` | files only, no symlink traversal, VCS metadata skipped; sorted preview capped at 100, with all matches persisted on overflow |
-| `bash` | `command`, `workdir?`, `timeout_ms?` | separate bounded stdout/stderr preview, timeout and exit marker; both raw streams persisted when either overflows |
+| `read_file` | `file_path`, `offset?`, `limit?` | 基于 1 索引且带行号的 UTF-8 窗口；默认最多返回 2,000 行，每行 2,000 个字符以及 50 KiB 大小限制 |
+| `write_file` | `file_path`, `content` | 原子化创建/完全替换；默认输入限制为 5-MiB |
+| `edit` | `file_path`, `old_string`, `new_string`, `replace_all?` | 精确字面替换；除非 `replace_all` 为 true，否则要求唯一匹配；默认适用于最大 5-MiB 的文件 |
+| `glob` | `pattern`, `path?` | 仅匹配文件，不遍历符号链接，跳过 VCS 元数据；排序后的预览最多显示 100 个结果，超出限制时会持久化保存所有匹配结果 |
+| `bash` | `command`, `workdir?`, `timeout_ms?` | 分离并具有边界的 stdout/stderr 预览，超时和退出标记；当任一流超出限制时，这两个原始流都会被持久化保存 |
 
-A glob pattern without `/` matches basenames at every depth. Capped reads tell
-the model which offset to request next. A capped glob returns both a narrowing
-hint and a path containing every match in traversal order.
+没有 `/` 的 glob 模式会在任意深度匹配基础名称（basenames）。达到上限的读取结果会提示模型下一次应该请求哪个偏移量（offset）。达到上限的 glob 结果会返回一个缩小范围的提示（narrowing hint），以及一个包含按遍历顺序排列的所有匹配结果的文件路径。
 
-## Workspace boundary
+## 工作区边界
 
-Relative paths resolve against one configured root. Absolute paths and `..`
-cannot escape it by default. Existing ancestors are resolved through the real
-filesystem path before the boundary is checked, which also blocks a symlink
-inside the workspace from redirecting a file Tool outside it.
+相对路径将相对于配置的一个根目录进行解析。默认情况下，绝对路径和 `..` 无法逃逸此根目录。
+在检查边界之前，任何存在的祖先目录都会通过真实文件系统路径进行解析，这也会阻止工作区内的符号链接将文件工具重定向到工作区之外。
 
-There is one narrow exception: `read_file` may read files under the configured
-`toolOutputDirectory` so the model can inspect complete Tool output. This does
-not grant `write_file`, `edit`, or Bash working-directory access outside the
-workspace. The default output directory is
-`${java.io.tmpdir}/agent-sdk-tool-output`.
+这里有一个狭窄的例外情况：`read_file` 可以读取配置的 `toolOutputDirectory` 目录下的文件，以便模型能够检查完整的工具输出。
+但这并不赋予 `write_file`、`edit` 或 Bash 在工作区外拥有工作目录访问权限。默认的输出目录是 `${java.io.tmpdir}/agent-sdk-tool-output`。
 
-This is an application guard, not an operating-system security sandbox. There
-is an unavoidable check/write race against unrelated external processes, and
-`allowOutsideWorkspace(true)` deliberately removes the boundary.
+这是一个应用程序级别的防护，而不是操作系统的安全沙箱。针对不相关的外部进程，不可避免地会存在检查/写入竞态条件，并且 `allowOutsideWorkspace(true)` 会故意移除此边界。
 
-## Read-before-mutation policy
+## 变更前读取策略
 
-By default, overwriting or editing an existing file requires a successful
-`read_file` in the same Turn. The read records a SHA-256 observation in that
-Turn's private State. Before mutation the Tool hashes the current file again:
+默认情况下，覆盖或编辑一个已存在的文件需要在一个同一回合（Turn）中成功执行过 `read_file`。
+读取操作会在该回合的私有状态（State）中记录一个 SHA-256 的观察结果。在进行内容变更前，该工具会再次对当前文件进行哈希计算：
 
-- no observation → `FILE_NOT_OBSERVED`, with “read then retry” guidance;
-- changed content → `FILE_CHANGED_SINCE_READ`, with “re-read then retry”
-  guidance;
-- successful create/write/edit records the new observation, so a later edit in
-  the same Turn can proceed.
+- 无观察结果 → `FILE_NOT_OBSERVED`，并提供“先读取再重试”的指导建议；
+- 内容已更改 → `FILE_CHANGED_SINCE_READ`，并提供“重新读取再重试”的指导建议；
+- 成功的创建/写入/编辑操作会记录新的观察结果，以便同一回合中后续的编辑能够继续进行。
 
-This avoids stale LLM edits and mirrors the observation policy used by mature
-coding Harnesses. It can be disabled with
-`requireReadBeforeMutation(false)` when another policy layer owns concurrency.
+这种机制可以避免过时的 LLM 编辑，并反映了成熟编码脚手架（Harnesses）所使用的观察策略。
+当并发控制由其他策略层拥有时，可以通过 `requireReadBeforeMutation(false)` 来禁用它。
 
-## Bash behavior and security
+## Bash 行为与安全性
 
-`bash` runs `<executable> -c <command>` with its working directory inside the
-workspace. It reports stdout, a marked stderr section, timeout and exit code.
-Non-zero exit and timeout results carry structured `COMMAND_EXIT_NON_ZERO` or
-`COMMAND_TIMED_OUT` errors plus a recovery instruction.
+`bash` 会在工作区内作为其工作目录运行 `<executable> -c <command>`。它会报告 stdout、一个带有标记的 stderr 区域、超时情况以及退出状态码。
+非零的退出状态和超时结果将携带结构化的 `COMMAND_EXIT_NON_ZERO` 或 `COMMAND_TIMED_OUT` 错误以及恢复指令。
 
-Each stream keeps a bounded head/tail preview. Complete raw streams are captured
-under `toolOutputDirectory`; the files are deleted when neither stream was
-truncated and both are retained when either stream was truncated. Keeping both
-means a later Agent-wide context bound can still recover everything without
-creating another combined-output copy. `bashSpillDirectory` remains available
-as a Bash-only override.
+每个流保留一个有限大小的头部/尾部预览。完整的原始流会被捕获到 `toolOutputDirectory` 下；当两个流都未被截断时，这些文件将被删除；而当任一流被截断时，两者都会被保留。
+保留两者意味着后续 Agent 级别的上下文限制仍可恢复所有内容，而无需创建另一份合并输出的副本。`bashSpillDirectory` 依然作为仅适用于 Bash 的覆盖配置提供。
 
-Output files may contain secrets and are not automatically expired in the
-MVP—the application or operating-system temp policy owns retention and cleanup.
-Failure to prepare or write complete capture returns
-`OUTPUT_PRESERVATION_FAILED` or `OUTPUT_CAPTURE_FAILED`; it never silently
-reports a lossy success.
+输出文件可能包含敏感信息（secrets），并且在 MVP 阶段不会被自动过期清理——应用程序或操作系统的临时文件策略负责它的保留与清理。
+如果未能准备或写入完整的捕获结果，将返回 `OUTPUT_PRESERVATION_FAILED` 或 `OUTPUT_CAPTURE_FAILED`；它永远不会静默报告一个有损的成功。
 
-The Bash Tool is intentionally **not a sandbox**. It inherits the Java process
-authority and environment, and a command can access paths outside the
-workspace. On Java 8, cancellation can forcibly stop the direct Bash process
-but cannot portably guarantee whole-process-tree termination. Production
-deployments should place the JVM/process in an OS sandbox or add an approval
-`ToolInterceptor`. Keep the Agent's generic `toolTimeout` longer than the Bash
-Tool's maximum timeout if partial timeout output must be returned to the model.
+Bash 工具在设计上**不是一个沙箱**。它继承了 Java 进程的权限和环境变量，并且命令可以访问工作区外部的路径。
+在 Java 8 上，取消操作能够强制停止直接启动的 Bash 进程，但由于平台移植性问题，无法保证整个进程树的终止。
+生产环境部署时应该将 JVM/进程放置在 OS 沙箱中，或者添加一个需要审批的 `ToolInterceptor`。
+如果必须将部分超时输出返回给模型，请保持 Agent 通用的 `toolTimeout` 超过 Bash 工具的最大超时时间。
 
-## Error shape
+## 错误形式
 
-Filesystem and process errors use stable codes and recovery text instead of
-returning Java stack traces. Examples include:
+文件系统和进程错误使用稳定的错误代码和恢复文本，而不是返回 Java 的堆栈跟踪。例如包括：
 
 - `PATH_OUTSIDE_WORKSPACE`
 - `FILE_NOT_FOUND`, `BINARY_FILE`, `INVALID_UTF8`
@@ -122,28 +94,21 @@ returning Java stack traces. Examples include:
 - `COMMAND_START_FAILED`, `COMMAND_EXIT_NON_ZERO`, `COMMAND_TIMED_OUT`
 - `OUTPUT_PRESERVATION_FAILED`, `OUTPUT_CAPTURE_FAILED`
 
-These errors still pass through the Agent-wide `ToolResultPolicy` before they
-enter model history.
+这些错误在进入模型历史记录之前，仍会通过 Agent 级别的 `ToolResultPolicy` 处理。
 
-## Mature implementation references
+## 成熟的实现参考
 
-The first version deliberately adopts established behavior from primary
-implementations:
+最初版本有意采用了来自主要实现的既定行为：
 
 - [DeepSeek Harness filesystem Tools](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/fs/tool-fs):
-  paginated numbered reads, per-line/byte limits, exact edit semantics and
-  read-before-mutation recovery.
+  支持带行号的分页读取、单行/字节数限制、精确编辑语义以及变更前读取恢复策略。
 - [DeepSeek Harness search Tools](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/fs/tool-fs-search):
-  result/raw-scan budgets, clear empty results, search narrowing guidance and
-  VCS metadata exclusions.
+  结果数量/原始扫描量的预算机制，清晰说明的空结果，搜索范围缩小指导以及 VCS 元数据排除。
 - [DeepSeek Harness Bash Tool](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/shell/tool-bash):
-  separate stdout/stderr, non-zero/timeout facts, bounded capture and spill
-  notices.
+  分离的 stdout/stderr，非零/超时事实记录，有限度的输出捕获和溢出提示。
 - [OpenCode built-in Tools](https://github.com/anomalyco/opencode/tree/dev/packages/opencode/src/tool):
-  the familiar read/write/edit/glob contracts and concise mutation results.
+  熟悉的读取/写入/编辑/glob契约和简明的修改结果。
 - [Pi output accumulator](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/tools/output-accumulator.ts):
-  bounded process previews with recoverable full-output files.
+  具备有限制的进程结果预览，同时提供可恢复的完整输出文件。
 
-The Java SDK keeps the public surface smaller: there is no permission DSL,
-background job runtime, packaged ripgrep binary or dynamic Tool router in this
-milestone.
+Java SDK 保持较小的公开接口暴露：在此里程碑中，没有权限 DSL、后台任务运行时环境、打包的 ripgrep 二进制文件或动态工具路由器。

@@ -1,62 +1,50 @@
-# MVP Scope and Roadmap
+# MVP 范围与路线图
 
-## Included in 0.1
+## 包含在 0.1 版本中
 
-- Provider-neutral complete-response and streaming model APIs.
-- Fixed model/tool Agent Loop.
-- Per-invocation AgentState and immutable snapshots.
-- Programmatic synchronous and asynchronous tools.
-- Lightweight annotation-based tools.
-- Immutable ToolRegistry and deterministic ToolExecutor.
-- Sequential and parallel tool batches.
-- Maximum steps, custom termination conditions and error policies.
-- Agent-as-Tool with child-state isolation and recursion guards.
-- File-backed Agent Skills with standard `SKILL.md` metadata, recursive
-  discovery and progressive instruction/resource loading.
-- A stateful, action-based Todo Tool scoped to one Agent Turn.
-- Java 8 JSON HTTP and SSE transport abstraction.
-- Streaming and non-streaming OpenAI-compatible Chat Completions provider.
-- Streaming and non-streaming OpenAI Responses API provider.
-- Streaming and non-streaming Anthropic Messages API provider.
-- Agent lifecycle and model-delta events through `runStreamingAsync`.
-- Build-time Plugins with lifecycle observers and ordered model/tool
-  interceptors.
-- Exporter-neutral Turn/Step/Model/Tool traces, cumulative execution metrics,
-  bounded opt-in content capture, and parent/SubAgent trace correlation.
-- Cancellation propagation from Agent execution to model and tool operations.
-- Lightweight ordered parallel-Agent composition.
-- Workspace-scoped `read_file`, `write_file`, `edit`, `glob`, and opt-in
-  `bash` Tools.
-- Recoverable oversized Tool output through OS-temp snapshots and source
-  references, without recursive spill copies.
-- MCP 2026-07-28 stateless stdio client with automatic 2025-11-25 fallback,
-  paginated and cache-aware Tool discovery, multi round-trip Tool input,
-  structured errors and Agent Tool adaptation.
-- Runnable examples and scripted-model unit tests.
+- 提供商无关的完整响应和流式模型 API。
+- 固定的模型/工具智能体循环 (Agent Loop)。
+- 每次调用的智能体状态 (AgentState) 和不可变的快照。
+- 编程式的同步和异步工具。
+- 基于注解的轻量级工具。
+- 不可变的工具注册表 (ToolRegistry) 和确定性的工具执行器 (ToolExecutor)。
+- 顺序和并行的工具批处理。
+- 最大步数、自定义终止条件和错误策略。
+- 作为工具的智能体 (Agent-as-Tool)，包含子状态隔离和递归保护。
+- 基于文件的智能体技能 (Agent Skills)，具有标准的 `SKILL.md` 元数据、递归发现以及渐进式指令/资源加载。
+- 有状态的、基于动作的 Todo 工具，作用域限定于单个智能体轮次 (Agent Turn)。
+- Java 8 JSON HTTP 和 SSE 传输抽象。
+- 兼容 OpenAI 的流式和非流式 Chat Completions 提供商。
+- 流式和非流式 OpenAI Responses API 提供商。
+- 流式和非流式 Anthropic Messages API 提供商。
+- 通过 `runStreamingAsync` 提供智能体生命周期和模型增量事件。
+- 构建时插件，包含生命周期观察者和有序的模型/工具拦截器。
+- 导出器无关的轮次/步骤/模型/工具 (Turn/Step/Model/Tool) 追踪、累积执行指标、有界可选内容捕获，以及父/子智能体追踪关联。
+- 从智能体执行到模型和工具操作的取消传播。
+- 轻量级的有序并行智能体组合。
+- 工作区作用域的 `read_file`、`write_file`、`edit`、`glob` 以及可选的 `bash` 工具。
+- 可恢复的超大工具输出，通过操作系统临时快照和源引用实现，无需递归溢出复制。
+- MCP 2026-07-28 无状态标准输入输出 (stdio) 客户端，自动回退到 2025-11-25 版本，支持分页和缓存感知的工具发现、多轮往返的工具输入、结构化错误以及智能体工具适配。
+- 可运行的示例和基于脚本化模型的单元测试。
 
-## Deliberately excluded
+## 刻意排除
 
-- Graph, edge or workflow DSLs.
-- Checkpointing and state persistence.
-- A persistent event bus or replayable event store.
-- Dynamic plugin loading, hot unload, dependency injection or service
-  container semantics.
-- RAG and vector stores.
-- MCP Streamable HTTP, legacy HTTP+SSE, resources, prompts, subscriptions,
-  first-class roots/sampling/elicitation APIs, Tasks extension and server mode.
-- Human-in-the-loop runtime.
-- A semantic or rule-based Skill router; the model selects from descriptions.
-- Distributed execution.
-- Spring integration.
+- 图、边或工作流 DSL。
+- 检查点机制和状态持久化。
+- 持久化事件总线或可回放的事件存储。
+- 动态插件加载、热卸载、依赖注入或服务容器语义。
+- RAG 和向量数据库。
+- MCP 流式 HTTP、旧版 HTTP+SSE、资源 (resources)、提示词 (prompts)、订阅 (subscriptions)、一等根/采样/启发式 API (roots/sampling/elicitation APIs)、任务扩展和服务器模式。
+- 包含人在回路 (Human-in-the-loop) 的运行时。
+- 基于语义或规则的技能路由器；由模型根据描述进行选择。
+- 分布式执行。
+- Spring 集成。
 
-## Likely follow-ups
+## 可能的后续工作
 
-1. More Provider modules.
-2. OpenTelemetry, Micrometer, and structured-log exporter adapters.
-3. Explicit Handoff control signals plus an AgentRegistry.
-4. Optional persistence implemented outside AgentState.
+1. 更多提供商模块。
+2. OpenTelemetry、Micrometer 和结构化日志导出器适配器。
+3. 显式的交接 (Handoff) 控制信号以及智能体注册表 (AgentRegistry)。
+4. 在 AgentState 之外实现的可选持久化。
 
-Supervisor, router, parallel-agent and review/debate patterns should remain
-compositions of Agent, AgentTool and CompletableFuture. Handoff and swarm need
-an explicit transfer-of-control concept and should not be hidden inside normal
-tool-return semantics.
+主管 (Supervisor)、路由器、并行智能体和审查/辩论模式应当保持为 Agent、AgentTool 和 CompletableFuture 的组合。交接 (Handoff) 和群体 (swarm) 需要显式的控制权转移概念，不应该隐藏在正常的工具返回语义中。

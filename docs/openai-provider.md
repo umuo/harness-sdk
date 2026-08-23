@@ -1,12 +1,10 @@
-# OpenAI Providers
+# OpenAI 提供者
 
-`agent-model-http` includes two OpenAI protocols. Both support complete
-responses, SSE streaming, tool definitions and tool calls.
+`agent-model-http` 包含两种 OpenAI 协议。两者都支持完整响应、SSE 流、工具定义和工具调用。
 
-## OpenAI-compatible Chat Completions
+## 兼容 OpenAI 的聊天补全 (Chat Completions)
 
-Use `OpenAiCompatibleChatModel` for OpenAI Chat Completions and compatible
-servers:
+对 OpenAI 聊天补全和兼容服务器使用 `OpenAiCompatibleChatModel`：
 
 ```java
 StreamingChatModel model = OpenAiCompatibleChatModel.builder()
@@ -15,8 +13,7 @@ StreamingChatModel model = OpenAiCompatibleChatModel.builder()
     .build();
 ```
 
-For a compatible local or third-party API, configure the base URL through
-the version prefix. The provider appends `/chat/completions` internally:
+对于兼容的本地或第三方 API，通过版本前缀配置基础 URL。提供者会在内部追加 `/chat/completions`：
 
 ```java
 StreamingChatModel model = OpenAiCompatibleChatModel.builder()
@@ -26,13 +23,11 @@ StreamingChatModel model = OpenAiCompatibleChatModel.builder()
     .build();
 ```
 
-`OpenAiChatModel` remains as a source-compatible facade for the earlier class
-name and now also implements `StreamingChatModel`.
+`OpenAiChatModel` 作为早期类名的源码兼容外观保留，现在也实现了 `StreamingChatModel`。
 
-## OpenAI Responses API
+## OpenAI 响应 (Responses) API
 
-Use the native Responses protocol when the server supports it. The provider
-appends `/responses` to the configured base URL:
+当服务器支持时，使用原生的 Responses 协议。提供者将 `/responses` 追加到配置的基础 URL：
 
 ```java
 StreamingChatModel model = OpenAiResponsesChatModel.builder()
@@ -42,25 +37,20 @@ StreamingChatModel model = OpenAiResponsesChatModel.builder()
     .build();
 ```
 
-The adapter converts Core messages to Responses input items:
+适配器将 Core 消息转换为 Responses 输入项：
 
-- system messages become top-level `instructions`;
-- user/assistant text becomes message input items;
-- assistant tool calls become `function_call` items;
-- tool messages become `function_call_output` items.
+- 系统消息成为顶层 `instructions`；
+- 用户/助手文本成为消息输入项；
+- 助手工具调用成为 `function_call` 项；
+- 工具消息成为 `function_call_output` 项。
 
-Streaming event names such as output-text deltas and function-argument deltas
-are normalized into `ModelStreamEvent` values.
+流事件名称（如输出文本增量和函数参数增量）被标准化为 `ModelStreamEvent` 值。
 
-## Provider-specific options
+## 提供者特定选项
 
-Both builders support base URL, API key, connect/read timeout, custom headers
-and a custom `HttpTransport`. Additional request fields can be passed through
-`ModelOptions.extension`. Extensions cannot replace protocol-owned fields such
-as `model`, `input`/`messages`, `tools` or `stream`.
+两个构建器都支持基础 URL、API 密钥、连接/读取超时、自定义标头和自定义 `HttpTransport`。其他请求字段可以通过 `ModelOptions.extension` 传递。扩展不能替换协议拥有的字段，例如 `model`、`input`/`messages`、`tools` 或 `stream`。
 
-For Chat Completions servers that require usage in streaming chunks, pass the
-provider option explicitly:
+对于需要在流式块中提供使用情况 (usage) 的 Chat Completions 服务器，请显式传递提供者选项：
 
 ```java
 ModelOptions options = ModelOptions.builder()

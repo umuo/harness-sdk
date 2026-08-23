@@ -1,11 +1,11 @@
-# Multi-Agent Composition
+# 多智能体组合
 
-Multi-Agent features reuse Agent, Agent-as-Tool, isolated State and
-`CompletableFuture`. There is no separate orchestration runtime.
+多智能体特性复用了 Agent、Agent-as-Tool、独立的 State 和
+`CompletableFuture`。不存在独立的编排运行时。
 
-## Supervisor
+## 监督者 (Supervisor)
 
-A Supervisor is an ordinary Agent with specialist Agents registered as Tools:
+监督者是一个普通的 Agent，它将专家 Agent 注册为 Tool（工具）：
 
 ```java
 Agent supervisor = Agent.builder()
@@ -19,10 +19,10 @@ Agent supervisor = Agent.builder()
     .build();
 ```
 
-Each specialist invocation creates a fresh AgentState. The parent sends a
-`task` argument and receives only the child result plus child Turn metadata.
+每次专家调用都会创建一个全新的 AgentState。父节点发送一个
+`task` 参数，并且只接收子节点的结果以及子节点回合（Turn）的元数据。
 
-## Independent parallel Agents
+## 独立的并行 Agent
 
 ```java
 List<AgentResult> results = AgentExecutions.runParallel(Arrays.asList(
@@ -32,21 +32,20 @@ List<AgentResult> results = AgentExecutions.runParallel(Arrays.asList(
 )).join();
 ```
 
-Calls start immediately, results remain in input order, a failure cancels
-unfinished calls, and cancellation of the aggregate future propagates to every
-call. No mutable State is shared.
+调用会立即开始，结果保持输入时的顺序，出现一次失败就会取消
+所有未完成的调用，并且对聚合 future 的取消操作会传播到每一个
+调用。不共享任何可变的 State。
 
-## Patterns that need no new runtime
+## 无需新运行时的模式
 
-- Router: an Agent chooses among registered Agent Tools.
-- Review/debate: call independent Agents, then pass their outputs to a reviewer.
-- Parallel research: use `AgentExecutions.runParallel`, then synthesize results
-  with another Agent.
-- Supervisor: register specialists with `.tool(agent)`.
+- 路由器 (Router)：一个 Agent 在注册的 Agent 工具之间进行选择。
+- 审查/辩论 (Review/debate)：调用多个独立的 Agent，然后将它们的输出传递给一个审查者。
+- 并行研究 (Parallel research)：使用 `AgentExecutions.runParallel`，然后使用另一个 Agent 综合这些结果。
+- 监督者 (Supervisor)：通过 `.tool(agent)` 注册专家。
 
-## Deferred patterns
+## 暂缓支持的模式 (Deferred patterns)
 
-Handoff and Swarm require an explicit transfer-of-control result and an
-AgentRegistry. They should be added as small primitives rather than encoded as
-ordinary tool text. Durable checkpoints, distributed scheduling and a graph DSL
-remain outside the SDK scope.
+交接（Handoff）和群体（Swarm）需要显式的控制权转移结果和一个
+AgentRegistry。它们应该作为小型原语来添加，而不是被编码为
+普通的工具文本。持久化检查点、分布式调度和图 DSL
+仍然在 SDK 的范围之外。
