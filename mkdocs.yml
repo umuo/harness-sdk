@@ -1,0 +1,54 @@
+site_name: Agent SDK
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Guide:
+    - Architecture: architecture.md
+    - API Guide: api-guide.md
+    - Examples: examples.md
+    - MVP Scope: mvp.md
+  - Capabilities:
+    - Model Providers: model-providers.md
+    - OpenAI Provider: openai-provider.md
+    - Multi-Agent: multi-agent.md
+  - Tools & Extensions:
+    - Tools Authoring: tools.md
+    - Built-in Tools: builtin-tools.md
+    - Tool Results: tool-results.md
+    - Agent Skills: skills.md
+    - MCP Integration: mcp.md
+    - Plugins: plugins.md
+  - Observability:
+    - Concepts: observability.md
+    - Web Platform: observability-platform.md
