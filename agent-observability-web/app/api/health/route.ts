@@ -6,6 +6,6 @@ export function GET() {
   return NextResponse.json({
     status: "ok",
     service: "agent-observability-web",
-    schemaVersions: ["1", "2"],
+    schemaVersions: ["1", "2", "3"],
   });
 }

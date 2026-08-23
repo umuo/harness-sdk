@@ -26,4 +26,9 @@ public interface AgentPlugin {
     default List<ToolInterceptor> toolInterceptors() {
         return Collections.emptyList();
     }
+
+    /** Requests bounded Provider request/response capture for Model calls. */
+    default boolean capturesModelExchange() {
+        return false;
+    }
 }

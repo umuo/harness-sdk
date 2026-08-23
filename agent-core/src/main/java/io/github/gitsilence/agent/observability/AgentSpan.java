@@ -20,6 +20,8 @@ public final class AgentSpan {
     private final long durationNanos;
     private final Map<String, Object> input;
     private final Map<String, Object> output;
+    private final Map<String, Object> sdkInput;
+    private final Map<String, Object> sdkOutput;
     private final Map<String, Object> attributes;
     private final String errorType;
     private final String errorMessage;
@@ -35,6 +37,8 @@ public final class AgentSpan {
               long durationNanos,
               Map<String, Object> input,
               Map<String, Object> output,
+              Map<String, Object> sdkInput,
+              Map<String, Object> sdkOutput,
               Map<String, Object> attributes,
               String errorType,
               String errorMessage) {
@@ -49,6 +53,8 @@ public final class AgentSpan {
         this.durationNanos = Math.max(0L, durationNanos);
         this.input = immutableMap(input, "input");
         this.output = immutableMap(output, "output");
+        this.sdkInput = immutableMap(sdkInput, "sdkInput");
+        this.sdkOutput = immutableMap(sdkOutput, "sdkOutput");
         this.attributes = Collections.unmodifiableMap(
             new LinkedHashMap<String, Object>(Objects.requireNonNull(
                 attributes, "attributes"
@@ -69,6 +75,10 @@ public final class AgentSpan {
     public long getDurationNanos() { return durationNanos; }
     public Map<String, Object> getInput() { return input; }
     public Map<String, Object> getOutput() { return output; }
+    /** Canonical SDK input retained when input contains a Provider payload. */
+    public Map<String, Object> getSdkInput() { return sdkInput; }
+    /** Canonical SDK output retained when output contains a Provider payload. */
+    public Map<String, Object> getSdkOutput() { return sdkOutput; }
     public Map<String, Object> getAttributes() { return attributes; }
     public String getErrorType() { return errorType; }
     public String getErrorMessage() { return errorMessage; }

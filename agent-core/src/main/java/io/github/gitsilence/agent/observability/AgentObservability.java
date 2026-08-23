@@ -80,6 +80,11 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
     }
 
     @Override
+    public boolean capturesModelExchange() {
+        return mode != AgentObservabilityMode.OFF && captureContent;
+    }
+
+    @Override
     public void onEvent(AgentEvent event) {
         Objects.requireNonNull(event, "event");
         if (mode == AgentObservabilityMode.OFF) return;

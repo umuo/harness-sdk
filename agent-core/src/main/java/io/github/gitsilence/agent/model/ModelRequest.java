@@ -12,15 +12,24 @@ public final class ModelRequest {
     private final List<ChatMessage> messages;
     private final List<ToolDefinition> tools;
     private final ModelOptions options;
+    private final boolean modelExchangeCaptureEnabled;
 
     public ModelRequest(List<ChatMessage> messages,
                         List<ToolDefinition> tools,
                         ModelOptions options) {
+        this(messages, tools, options, false);
+    }
+
+    public ModelRequest(List<ChatMessage> messages,
+                        List<ToolDefinition> tools,
+                        ModelOptions options,
+                        boolean modelExchangeCaptureEnabled) {
         Objects.requireNonNull(messages, "messages");
         Objects.requireNonNull(tools, "tools");
         this.messages = Collections.unmodifiableList(new ArrayList<ChatMessage>(messages));
         this.tools = Collections.unmodifiableList(new ArrayList<ToolDefinition>(tools));
         this.options = options == null ? ModelOptions.empty() : options;
+        this.modelExchangeCaptureEnabled = modelExchangeCaptureEnabled;
     }
 
     public List<ChatMessage> getMessages() {
@@ -33,5 +42,15 @@ public final class ModelRequest {
 
     public ModelOptions getOptions() {
         return options;
+    }
+
+    /** Internal/provider hint controlled by registered Agent Plugins. */
+    public boolean isModelExchangeCaptureEnabled() {
+        return modelExchangeCaptureEnabled;
+    }
+
+    public ModelRequest withModelExchangeCaptureEnabled(boolean enabled) {
+        if (modelExchangeCaptureEnabled == enabled) return this;
+        return new ModelRequest(messages, tools, options, enabled);
     }
 }

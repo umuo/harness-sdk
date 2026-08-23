@@ -4,6 +4,8 @@ import io.github.gitsilence.agent.agent.Agent;
 import io.github.gitsilence.agent.agent.AgentResult;
 import io.github.gitsilence.agent.model.ChatMessage;
 import io.github.gitsilence.agent.model.ChatModel;
+import io.github.gitsilence.agent.model.ModelExchange;
+import io.github.gitsilence.agent.model.ModelExchangeException;
 import io.github.gitsilence.agent.model.ModelResponse;
 import io.github.gitsilence.agent.model.ToolCall;
 import io.github.gitsilence.agent.model.Usage;
@@ -27,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,7 +46,10 @@ class AgentObservabilityTest {
             .attribute("service.name", "observability-test")
             .build();
         AtomicInteger modelRound = new AtomicInteger();
+        AtomicReference<Boolean> exchangeCapture =
+            new AtomicReference<Boolean>();
         ChatModel model = request -> {
+            exchangeCapture.set(request.isModelExchangeCaptureEnabled());
             if (modelRound.incrementAndGet() == 1) {
                 return CompletableFuture.completedFuture(new ModelResponse(
                     ChatMessage.assistant(null, Collections.singletonList(
@@ -75,6 +81,7 @@ class AgentObservabilityTest {
         AgentResult result = agent.run("run echo");
 
         assertEquals("done", result.getOutput());
+        assertEquals(false, exchangeCapture.get());
         assertEquals(1, exporter.getTraces().size());
         AgentTrace trace = exporter.getTraces().get(0);
         assertEquals(ExecutionStatus.COMPLETED, trace.getStatus());
@@ -155,6 +162,92 @@ class AgentObservabilityTest {
         Map<String, Object> response =
             (Map<String, Object>) model.getOutput().get("message");
         assertEquals("visible-response", response.get("content"));
+    }
+
+    @Test
+    void exposesRawProviderPayloadSeparatelyFromNormalizedSdkPayload() {
+        InMemoryTraceExporter exporter = new InMemoryTraceExporter();
+        AgentObservability observability = AgentObservability.builder()
+            .exporter(exporter)
+            .captureContent(true)
+            .build();
+        ModelExchange exchange = new ModelExchange(
+            "OpenAI Compatible API",
+            "https://api.openai.com/v1/chat/completions",
+            false,
+            "{\"model\":\"gpt-5\",\"messages\":[{\"role\":\"user\","
+                + "\"content\":\"hello\"}]}",
+            200,
+            "{\"id\":\"chatcmpl-1\",\"choices\":[{\"message\":{"
+                + "\"role\":\"assistant\",\"content\":\"wire response\"}}]}",
+            "application/json",
+            false
+        );
+        AtomicReference<Boolean> exchangeCapture =
+            new AtomicReference<Boolean>();
+        Agent agent = agent("raw-provider", request -> {
+            exchangeCapture.set(request.isModelExchangeCaptureEnabled());
+            return CompletableFuture.completedFuture(new ModelResponse(
+                ChatMessage.assistant("normalized response"),
+                new Usage(3, 2, 5),
+                Collections.singletonMap("finishReason", (Object) "stop"),
+                exchange
+            ));
+        }).plugin(observability).build();
+
+        assertEquals("normalized response", agent.run("hello").getOutput());
+        assertEquals(true, exchangeCapture.get());
+
+        AgentSpan model = only(
+            exporter.getTraces().get(0), AgentSpanKind.MODEL, 0
+        );
+        assertEquals("gpt-5", model.getInput().get("model"));
+        assertEquals("chatcmpl-1", model.getOutput().get("id"));
+        assertTrue(model.getSdkInput().containsKey("messages"));
+        assertTrue(model.getSdkOutput().containsKey("message"));
+        assertEquals("OpenAI Compatible API",
+            model.getAttributes().get("agent.model.provider.name"));
+        assertEquals(200,
+            model.getAttributes().get("agent.model.provider.response.status"));
+        assertFalse(model.getInput().containsKey("messageCount"));
+    }
+
+    @Test
+    void failedProviderPayloadIsRetainedOnTheOpenModelSpan() {
+        InMemoryTraceExporter exporter = new InMemoryTraceExporter();
+        AgentObservability observability = AgentObservability.builder()
+            .exporter(exporter)
+            .captureContent(true)
+            .build();
+        ModelExchange exchange = new ModelExchange(
+            "Anthropic API",
+            "https://api.anthropic.com/v1/messages",
+            false,
+            "{\"model\":\"claude-test\",\"messages\":[]}",
+            429,
+            "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\"}}",
+            "application/json",
+            false
+        );
+        CompletableFuture<ModelResponse> failed =
+            new CompletableFuture<ModelResponse>();
+        failed.completeExceptionally(new ModelExchangeException(
+            "Anthropic API returned HTTP 429", exchange
+        ));
+        Agent agent = agent("failed-provider", request -> failed)
+            .plugin(observability)
+            .build();
+
+        assertThrows(AgentExecutionException.class, () -> agent.run("hello"));
+
+        AgentSpan model = only(
+            exporter.getTraces().get(0), AgentSpanKind.MODEL, 0
+        );
+        assertEquals("claude-test", model.getInput().get("model"));
+        assertEquals("error", model.getOutput().get("type"));
+        assertEquals(429,
+            model.getAttributes().get("agent.model.provider.response.status"));
+        assertEquals(AgentSpanStatus.ERROR, model.getStatus());
     }
 
     @Test

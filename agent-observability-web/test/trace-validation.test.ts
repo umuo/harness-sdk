@@ -33,8 +33,24 @@ test("schema v1 remains readable with empty node input and output", () => {
   assert.deepEqual(trace.spans[0].output, {});
 });
 
+test("schema v3 preserves provider and normalized SDK payloads", () => {
+  const trace = validateTrace(traceDocument("3", {
+    input: { model: "gpt-5", messages: [{ role: "user", content: "hi" }] },
+    output: { id: "response-1", choices: [] },
+    sdkInput: { messages: [{ role: "user", content: "hi" }] },
+    sdkOutput: { message: { role: "assistant", content: "hello" } },
+  }));
+
+  assert.equal(trace.schemaVersion, "3");
+  assert.equal(trace.spans[0].input.model, "gpt-5");
+  assert.equal(
+    (trace.spans[0].sdkOutput.message as { content: string }).content,
+    "hello",
+  );
+});
+
 function traceDocument(
-  schemaVersion: "1" | "2",
+  schemaVersion: "1" | "2" | "3",
   spanFields: Record<string, unknown>,
 ) {
   const timestamp = "2026-08-23T10:00:00Z";

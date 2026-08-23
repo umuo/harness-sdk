@@ -129,7 +129,8 @@ final class AgentLoop {
         ModelRequest request = new ModelRequest(
             state.messagesSnapshot(),
             new ArrayList<>(agent.getToolRegistry().definitions()),
-            agent.getModelOptions()
+            agent.getModelOptions(),
+            capturesModelExchange()
         );
         emit(AgentEvent.modelStarted(
             nextSequence(), state.getRunId(), agent.descriptor().getName(),
@@ -228,6 +229,13 @@ final class AgentLoop {
         cancellations.add(() -> result.cancel(true));
         result.whenComplete((response, error) -> clearActive(cancellation));
         return result;
+    }
+
+    private boolean capturesModelExchange() {
+        for (AgentPlugin plugin : agent.getPlugins()) {
+            if (plugin.capturesModelExchange()) return true;
+        }
+        return false;
     }
 
     private CompletableFuture<ModelResponse> proceedModel(

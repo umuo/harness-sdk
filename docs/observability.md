@@ -31,20 +31,20 @@ Their identifiers are opaque SDK identifiers; an exporter may translate them
 to the identifier format required by its backend.
 
 Each `AgentSpan` exposes `getInput()` and `getOutput()` separately from indexed
-attributes. Model nodes contain the provider-neutral `ModelRequest` and
-`ModelResponse` shape: messages, available Tool definitions, Model options,
-assistant output, Tool calls, usage, and provider metadata. Tool nodes contain
-parsed arguments, result content, structured errors, metadata, and output-file
-references. This is the logical Agent/Model boundary, not a vendor's raw HTTP
-headers or transport body.
+attributes. For the bundled HTTP Providers, Model input and output contain the
+actual serialized request body and raw response structure. The corresponding
+provider-neutral `ModelRequest` and `ModelResponse` remain available through
+`getSdkInput()` and `getSdkOutput()`. Custom Models without a Provider exchange
+continue to expose their canonical SDK payload directly as input and output.
+Tool nodes contain parsed arguments, result content, structured errors,
+metadata, and output-file references.
 
 Observability-only summaries never appear inside Model span input or output.
 For example, message count, available Tool count, returned Tool-call count, and
 capture-omission counts use `agent.model.*` span attributes instead. The node
-inspector therefore keeps the provider-neutral `ModelRequest` and
-`ModelResponse` separate from indexed telemetry metadata. Provider adapters
-remain responsible for translating that canonical model into OpenAI,
-Anthropic, or another vendor's exact HTTP schema.
+inspector therefore keeps the Provider body, normalized SDK model, and indexed
+telemetry metadata separate. HTTP Headers are deliberately never copied into
+the exchange because Authorization and vendor API-key headers are sensitive.
 
 ## Basic usage
 
@@ -114,6 +114,12 @@ The `platform(...)` convenience methods enable bounded content capture so the
 trace debugger can display Model requests and responses immediately. To keep
 platform traces metadata-only, configure the transport through the Builder
 and call `.captureContent(false)`.
+
+No Provider-specific observability switch is required. The Agent Loop marks
+only Model requests whose registered Plugins request exchange capture; the
+bundled HTTP Provider then attaches its exact serialized body to that response.
+Model calls made without such a Plugin retain the previous zero-capture
+behavior.
 
 Register exactly the chosen instance with `.plugin(observability)`. `OFF`
 returns immediately on every lifecycle event, so it has lower overhead than a
@@ -216,6 +222,18 @@ AgentObservability observability = AgentObservability.builder()
     .build();
 ```
 
+Bundled HTTP Models attach a header-free `ModelExchange` to each successful
+response and to Provider exceptions only when a registered Plugin explicitly
+requests content capture. With observability disabled or metadata-only, raw
+Provider bodies are not retained and SSE events are not accumulated. When
+content capture is enabled, JSON
+bodies retain their vendor field names and nesting while long text leaves,
+collection sizes, and nesting depth remain bounded. SSE response text is
+captured with normalized LF line endings. Every Provider response exchange is
+limited to 2 MiB before the observability field limit is applied.
+Authorization/API-key Headers are never attached, and
+query strings or URL fragments are removed from captured endpoints.
+
 Opt-in content can still contain credentials, personal data, proprietary
 prompts, or large encoded values. Apply redaction in the exporter and restrict
 backend access. Truncation protects memory and telemetry volume; it is not a
@@ -274,10 +292,12 @@ clickable call graph while retaining separate Turn records.
 - cancellation closes unfinished spans as `CANCELLED`;
 - plugin/exporter failures never alter Agent execution.
 
-The current wire format has `schemaVersion: "2"`; version 2 adds structured
-span `input` and `output`. It is encoded explicitly by `AgentTraceJsonCodec`
-instead of exposing Jackson's representation of Java classes as an accidental
-protocol. The bundled web service continues to read version 1 documents.
+The current wire format has `schemaVersion: "3"`. Version 3 adds the actual
+Provider request/response payload plus separate `sdkInput` and `sdkOutput`
+views for the normalized Core model. It is encoded explicitly by
+`AgentTraceJsonCodec` instead of exposing Jackson's representation of Java
+classes as an accidental protocol. The bundled web service continues to read
+version 1 and 2 documents.
 Sampling, histograms,
 OpenTelemetry/vendor SDKs, and production database storage remain outside
 Core. See [Observability web platform](observability-platform.md).

@@ -70,7 +70,7 @@ class ObservabilityExportersTest {
                 .run("hello");
 
             JsonNode json = new ObjectMapper().readTree(message.get());
-            assertEquals("2", json.path("schemaVersion").asText());
+            assertEquals("3", json.path("schemaVersion").asText());
             assertEquals("logged", json.path("agentName").asText());
             assertEquals("COMPLETED", json.path("status").asText());
             assertTrue(json.path("spans").isArray());
@@ -125,7 +125,7 @@ class ObservabilityExportersTest {
             assertEquals(2, attempts.get());
             assertEquals("Bearer test-key", authorization.get());
             JsonNode json = new ObjectMapper().readTree(body.get());
-            assertEquals("2", json.path("schemaVersion").asText());
+            assertEquals("3", json.path("schemaVersion").asText());
             assertEquals("platform", json.path("agentName").asText());
             assertEquals("agent-test",
                 json.path("attributes").path("service.name").asText());

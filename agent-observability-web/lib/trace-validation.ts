@@ -13,7 +13,11 @@ export class TraceValidationError extends Error {
 export function validateTrace(input: unknown): AgentTrace {
   const value = record(input, "trace");
   const schemaVersion = text(value.schemaVersion, "schemaVersion", 16);
-  if (schemaVersion !== "1" && schemaVersion !== "2") {
+  if (
+    schemaVersion !== "1" &&
+    schemaVersion !== "2" &&
+    schemaVersion !== "3"
+  ) {
     throw new TraceValidationError(
       `Unsupported schemaVersion '${schemaVersion}'`,
     );
@@ -81,6 +85,8 @@ function parseSpan(input: unknown, index: number): TraceSpan {
     ),
     input: optionalAttributes(value.input, `${prefix}.input`),
     output: optionalAttributes(value.output, `${prefix}.output`),
+    sdkInput: optionalAttributes(value.sdkInput, `${prefix}.sdkInput`),
+    sdkOutput: optionalAttributes(value.sdkOutput, `${prefix}.sdkOutput`),
     attributes: attributes(value.attributes, `${prefix}.attributes`),
     errorType: optionalText(value.errorType, `${prefix}.errorType`, MAX_TEXT),
     errorMessage: optionalText(

@@ -18,13 +18,15 @@ export interface TraceSpan {
   durationNanos: number;
   input: TraceAttributes;
   output: TraceAttributes;
+  sdkInput: TraceAttributes;
+  sdkOutput: TraceAttributes;
   attributes: TraceAttributes;
   errorType: string;
   errorMessage: string;
 }
 
 export interface AgentTrace {
-  schemaVersion: "1" | "2";
+  schemaVersion: "1" | "2" | "3";
   traceId: string;
   turnId: string;
   parentTurnId: string;

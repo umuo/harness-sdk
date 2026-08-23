@@ -4,7 +4,12 @@ import { useMemo, useState } from "react";
 import { formatDuration } from "../lib/format";
 import type { TraceAttributes, TraceSpan } from "../lib/trace-types";
 
-type InspectorTab = "input" | "output" | "metadata";
+type InspectorTab =
+  | "input"
+  | "output"
+  | "sdkInput"
+  | "sdkOutput"
+  | "metadata";
 
 interface GraphNode {
   span: TraceSpan;
@@ -14,9 +19,15 @@ interface GraphNode {
 export interface TraceGraphCopy {
   input: string;
   output: string;
+  providerInput: string;
+  providerOutput: string;
+  sdkInput: string;
+  sdkOutput: string;
   metadata: string;
   emptyInput: string;
   emptyOutput: string;
+  emptySdkInput: string;
+  emptySdkOutput: string;
   contentNotCaptured: string;
   selectNode: string;
   status: string;
@@ -81,11 +92,27 @@ export function TraceGraph({
             </header>
             <div className="inspector-tabs" role="tablist">
               <Tab active={tab === "input"} onClick={() => setTab("input")}>
-                {copy.input}
+                {hasProviderPayload(selected) ? copy.providerInput : copy.input}
               </Tab>
               <Tab active={tab === "output"} onClick={() => setTab("output")}>
-                {copy.output}
+                {hasProviderPayload(selected) ? copy.providerOutput : copy.output}
               </Tab>
+              {Object.keys(selected.sdkInput).length > 0 && (
+                <Tab
+                  active={tab === "sdkInput"}
+                  onClick={() => setTab("sdkInput")}
+                >
+                  {copy.sdkInput}
+                </Tab>
+              )}
+              {Object.keys(selected.sdkOutput).length > 0 && (
+                <Tab
+                  active={tab === "sdkOutput"}
+                  onClick={() => setTab("sdkOutput")}
+                >
+                  {copy.sdkOutput}
+                </Tab>
+              )}
               <Tab active={tab === "metadata"} onClick={() => setTab("metadata")}>
                 {copy.metadata}
               </Tab>
@@ -199,7 +226,7 @@ function InspectorContent({
     );
   }
 
-  const value = tab === "input" ? span.input : span.output;
+  const value = tabValue(span, tab);
   const contentCaptured = span.attributes["agent.content.captured"];
   if (
     contentCaptured === false &&
@@ -215,10 +242,26 @@ function InspectorContent({
   }
   return (
     <JsonPanel
-      empty={tab === "input" ? copy.emptyInput : copy.emptyOutput}
+      empty={emptyTab(copy, tab)}
       value={value}
     />
   );
+}
+
+function tabValue(span: TraceSpan, tab: InspectorTab): TraceAttributes {
+  if (tab === "input") return span.input;
+  if (tab === "output") return span.output;
+  if (tab === "sdkInput") return span.sdkInput;
+  if (tab === "sdkOutput") return span.sdkOutput;
+  return {};
+}
+
+function emptyTab(copy: TraceGraphCopy, tab: InspectorTab): string {
+  if (tab === "input") return copy.emptyInput;
+  if (tab === "output") return copy.emptyOutput;
+  if (tab === "sdkInput") return copy.emptySdkInput;
+  if (tab === "sdkOutput") return copy.emptySdkOutput;
+  return copy.selectNode;
 }
 
 function JsonPanel({
@@ -235,14 +278,25 @@ function JsonPanel({
 }
 
 function hasCapturedInput(span: TraceSpan): boolean {
-  return "messages" in span.input || "arguments" in span.input;
+  return (
+    Object.keys(span.input).length > 0 ||
+    Object.keys(span.sdkInput).length > 0
+  );
 }
 
 function hasCapturedOutput(span: TraceSpan): boolean {
   return (
-    "message" in span.output ||
-    "content" in span.output ||
-    "finalOutput" in span.output
+    Object.keys(span.output).length > 0 ||
+    Object.keys(span.sdkOutput).length > 0
+  );
+}
+
+function hasProviderPayload(span: TraceSpan): boolean {
+  return (
+    span.kind === "MODEL" &&
+    (Object.keys(span.sdkInput).length > 0 ||
+      Object.keys(span.sdkOutput).length > 0 ||
+      span.attributes["agent.model.provider.exchange.captured"] === true)
   );
 }
 

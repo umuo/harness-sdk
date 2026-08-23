@@ -4,6 +4,7 @@ import io.github.gitsilence.agent.anthropic.AnthropicChatModel;
 import io.github.gitsilence.agent.model.ChatMessage;
 import io.github.gitsilence.agent.model.ModelOptions;
 import io.github.gitsilence.agent.model.ModelRequest;
+import io.github.gitsilence.agent.model.ModelResponse;
 import io.github.gitsilence.agent.openai.OpenAiChatModel;
 import io.github.gitsilence.agent.openai.OpenAiCompatibleChatModel;
 import io.github.gitsilence.agent.openai.OpenAiResponsesChatModel;
@@ -13,6 +14,7 @@ import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderBaseUrlTest {
 
@@ -27,7 +29,7 @@ class ProviderBaseUrlTest {
     @Test
     void openAiChatModelsAppendChatCompletionsToVersionedBaseUrl() {
         CapturingTransport facadeTransport = new CapturingTransport(CHAT_RESPONSE);
-        OpenAiChatModel.builder()
+        ModelResponse facadeResponse = OpenAiChatModel.builder()
             .baseUrl("https://gateway.example/v1/")
             .model("test-model")
             .transport(facadeTransport)
@@ -38,6 +40,11 @@ class ProviderBaseUrlTest {
             "https://gateway.example/v1/chat/completions",
             facadeTransport.request.getUrl()
         );
+        assertEquals(CHAT_RESPONSE,
+            facadeResponse.getExchange().getResponseBody());
+        assertTrue(facadeResponse.getExchange().getRequestBody().contains(
+            "\"model\":\"test-model\""
+        ));
 
         CapturingTransport compatibleTransport = new CapturingTransport(CHAT_RESPONSE);
         OpenAiCompatibleChatModel.builder()
@@ -56,7 +63,7 @@ class ProviderBaseUrlTest {
     @Test
     void responsesModelAppendsResponsesToVersionedBaseUrl() {
         CapturingTransport transport = new CapturingTransport(RESPONSES_RESPONSE);
-        OpenAiResponsesChatModel.builder()
+        ModelResponse response = OpenAiResponsesChatModel.builder()
             .baseUrl("https://gateway.example/v1/")
             .model("test-model")
             .transport(transport)
@@ -65,12 +72,14 @@ class ProviderBaseUrlTest {
             .join();
 
         assertEquals("https://gateway.example/v1/responses", transport.request.getUrl());
+        assertEquals(RESPONSES_RESPONSE, response.getExchange().getResponseBody());
+        assertTrue(response.getExchange().getRequestBody().contains("\"input\":"));
     }
 
     @Test
     void anthropicModelAppendsVersionedMessagesPathToHostBaseUrl() {
         CapturingTransport transport = new CapturingTransport(ANTHROPIC_RESPONSE);
-        AnthropicChatModel.builder()
+        ModelResponse response = AnthropicChatModel.builder()
             .baseUrl("https://claude-gateway.example/")
             .model("test-model")
             .transport(transport)
@@ -82,13 +91,18 @@ class ProviderBaseUrlTest {
             "https://claude-gateway.example/v1/messages",
             transport.request.getUrl()
         );
+        assertEquals(ANTHROPIC_RESPONSE, response.getExchange().getResponseBody());
+        assertTrue(response.getExchange().getRequestBody().contains(
+            "\"max_tokens\":"
+        ));
     }
 
     private static ModelRequest request() {
         return new ModelRequest(
             Collections.singletonList(ChatMessage.user("hello")),
             Collections.emptyList(),
-            ModelOptions.empty()
+            ModelOptions.empty(),
+            true
         );
     }
 

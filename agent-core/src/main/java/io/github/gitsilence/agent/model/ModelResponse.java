@@ -10,10 +10,18 @@ public final class ModelResponse {
     private final ChatMessage assistantMessage;
     private final Usage usage;
     private final Map<String, Object> metadata;
+    private final ModelExchange exchange;
 
     public ModelResponse(ChatMessage assistantMessage,
                          Usage usage,
                          Map<String, Object> metadata) {
+        this(assistantMessage, usage, metadata, null);
+    }
+
+    public ModelResponse(ChatMessage assistantMessage,
+                         Usage usage,
+                         Map<String, Object> metadata,
+                         ModelExchange exchange) {
         this.assistantMessage = Objects.requireNonNull(assistantMessage, "assistantMessage");
         if (assistantMessage.getRole() != MessageRole.ASSISTANT) {
             throw new IllegalArgumentException("Model response must contain an assistant message");
@@ -22,6 +30,7 @@ public final class ModelResponse {
         this.metadata = metadata == null
             ? Collections.<String, Object>emptyMap()
             : Collections.unmodifiableMap(new LinkedHashMap<String, Object>(metadata));
+        this.exchange = exchange;
     }
 
     public static ModelResponse of(ChatMessage assistantMessage) {
@@ -38,5 +47,15 @@ public final class ModelResponse {
 
     public Map<String, Object> getMetadata() {
         return metadata;
+    }
+
+    /** Provider HTTP exchange, or {@code null} for non-HTTP/custom Models. */
+    public ModelExchange getExchange() {
+        return exchange;
+    }
+
+    public ModelResponse withExchange(ModelExchange value) {
+        return new ModelResponse(assistantMessage, usage, metadata,
+            Objects.requireNonNull(value, "exchange"));
     }
 }

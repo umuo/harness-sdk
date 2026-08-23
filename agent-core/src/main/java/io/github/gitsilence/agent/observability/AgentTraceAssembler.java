@@ -3,6 +3,8 @@ package io.github.gitsilence.agent.observability;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.gitsilence.agent.model.ChatMessage;
 import io.github.gitsilence.agent.model.ModelOptions;
+import io.github.gitsilence.agent.model.ModelExchange;
+import io.github.gitsilence.agent.model.ModelExchangeException;
 import io.github.gitsilence.agent.model.ModelRequest;
 import io.github.gitsilence.agent.model.ModelResponse;
 import io.github.gitsilence.agent.model.ToolCall;
@@ -34,6 +36,8 @@ final class AgentTraceAssembler {
     private static final int MAX_CAPTURED_MESSAGES = 200;
     private static final int MAX_CAPTURED_TOOLS = 100;
     private static final int MAX_CAPTURED_TOOL_CALLS = 100;
+    private static final int MAX_CAPTURED_JSON_ENTRIES = 500;
+    private static final int MAX_CAPTURED_JSON_DEPTH = 24;
 
     private final String traceId;
     private final String turnId;
@@ -231,6 +235,7 @@ final class AgentTraceAssembler {
                 span.output.put("metadata", response.getMetadata());
             }
         }
+        applyModelExchange(span, response.getExchange());
         span.finish(event.getTimestamp(), AgentSpanStatus.OK, null);
     }
 
@@ -357,6 +362,14 @@ final class AgentTraceAssembler {
             ? status(event.getType()) : state.getStatus();
         AgentSpanStatus terminalStatus = spanStatus(status);
         Throwable error = event.getError();
+        ModelExchange failedExchange = modelExchange(error);
+        if (failedExchange != null) {
+            for (MutableSpan span : spans.values()) {
+                if (span.kind == AgentSpanKind.MODEL && !span.finished) {
+                    applyModelExchange(span, failedExchange);
+                }
+            }
+        }
         for (MutableSpan span : spans.values()) {
             if (!span.finished) {
                 span.finish(event.getTimestamp(), terminalStatus, error);
@@ -446,6 +459,146 @@ final class AgentTraceAssembler {
         }
         input.put("tools", tools);
         return input;
+    }
+
+    private void applyModelExchange(MutableSpan span,
+                                    ModelExchange exchange) {
+        if (exchange == null) return;
+        span.attributes.put("agent.model.provider.name", exchange.getProvider());
+        span.attributes.put(
+            "agent.model.provider.endpoint", exchange.getEndpoint()
+        );
+        span.attributes.put(
+            "agent.model.provider.streaming", exchange.isStreaming()
+        );
+        span.attributes.put(
+            "agent.model.provider.response.media_type",
+            exchange.getResponseMediaType()
+        );
+        if (exchange.getResponseStatus() > 0) {
+            span.attributes.put(
+                "agent.model.provider.response.status",
+                exchange.getResponseStatus()
+            );
+        }
+        if (!captureContent) return;
+
+        span.sdkInput.putAll(span.input);
+        span.sdkOutput.putAll(span.output);
+        span.input.clear();
+        span.output.clear();
+
+        boolean requestTruncated = captureProviderBody(
+            span.input,
+            exchange.getRequestBody(),
+            "application/json"
+        );
+        boolean responseTruncated = captureProviderBody(
+            span.output,
+            exchange.getResponseBody(),
+            exchange.getResponseMediaType()
+        );
+        span.attributes.put("agent.model.provider.exchange.captured", true);
+        if (requestTruncated) {
+            span.attributes.put(
+                "agent.model.provider.request.truncated", true
+            );
+        }
+        if (responseTruncated || exchange.isResponseTruncated()) {
+            span.attributes.put(
+                "agent.model.provider.response.truncated", true
+            );
+        }
+    }
+
+    private boolean captureProviderBody(Map<String, Object> target,
+                                        String body,
+                                        String mediaType) {
+        if (body == null || body.isEmpty()) return false;
+        boolean[] truncated = { false };
+        if (mediaType != null && mediaType.contains("json")) {
+            try {
+                Object parsed = CONTENT_MAPPER.readValue(body, Object.class);
+                Object bounded = boundedJson(parsed, 0, truncated);
+                if (bounded instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> values =
+                        (Map<String, Object>) bounded;
+                    target.putAll(values);
+                } else {
+                    target.put("body", bounded);
+                }
+                return truncated[0];
+            } catch (Exception ignored) {
+                // Preserve non-JSON error bodies as bounded text.
+            }
+        }
+        String limited = limit(body);
+        target.put("body", limited);
+        return !limited.equals(body);
+    }
+
+    private Object boundedJson(Object value,
+                               int depth,
+                               boolean[] truncated) {
+        if (value == null || value instanceof Number
+                || value instanceof Boolean) {
+            return value;
+        }
+        if (value instanceof String) {
+            String limited = limit((String) value);
+            if (!limited.equals(value)) truncated[0] = true;
+            return limited;
+        }
+        if (depth >= MAX_CAPTURED_JSON_DEPTH) {
+            truncated[0] = true;
+            return "...[max depth]";
+        }
+        if (value instanceof Map) {
+            Map<?, ?> source = (Map<?, ?>) value;
+            Map<String, Object> result =
+                new LinkedHashMap<String, Object>();
+            int captured = 0;
+            for (Map.Entry<?, ?> entry : source.entrySet()) {
+                if (captured++ >= MAX_CAPTURED_JSON_ENTRIES) {
+                    truncated[0] = true;
+                    break;
+                }
+                result.put(
+                    String.valueOf(entry.getKey()),
+                    boundedJson(entry.getValue(), depth + 1, truncated)
+                );
+            }
+            return result;
+        }
+        if (value instanceof List) {
+            List<?> source = (List<?>) value;
+            List<Object> result = new ArrayList<Object>();
+            int limit = Math.min(source.size(), MAX_CAPTURED_JSON_ENTRIES);
+            for (int index = 0; index < limit; index++) {
+                result.add(boundedJson(
+                    source.get(index), depth + 1, truncated
+                ));
+            }
+            if (source.size() > limit) truncated[0] = true;
+            return result;
+        }
+        String limited = limit(String.valueOf(value));
+        if (!limited.equals(String.valueOf(value))) truncated[0] = true;
+        return limited;
+    }
+
+    private ModelExchange modelExchange(Throwable error) {
+        Throwable current = error;
+        int depth = 0;
+        while (current != null && depth++ < 32) {
+            if (current instanceof ModelExchangeException) {
+                return ((ModelExchangeException) current).getExchange();
+            }
+            if (current.getCause() == current) break;
+            current = current.getCause();
+        }
+        return null;
     }
 
     private void captureMessages(Map<String, Object> target,
@@ -595,6 +748,10 @@ final class AgentTraceAssembler {
             new LinkedHashMap<String, Object>();
         private final Map<String, Object> output =
             new LinkedHashMap<String, Object>();
+        private final Map<String, Object> sdkInput =
+            new LinkedHashMap<String, Object>();
+        private final Map<String, Object> sdkOutput =
+            new LinkedHashMap<String, Object>();
         private Instant endedAt;
         private long durationNanos;
         private AgentSpanStatus status;
@@ -661,6 +818,8 @@ final class AgentTraceAssembler {
                 durationNanos,
                 input,
                 output,
+                sdkInput,
+                sdkOutput,
                 attributes,
                 errorType,
                 abbreviate(errorMessage, maxErrorCharacters)

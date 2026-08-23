@@ -3,6 +3,8 @@ package io.github.gitsilence.agent.http;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.gitsilence.agent.model.ModelException;
+import io.github.gitsilence.agent.model.ModelExchange;
+import io.github.gitsilence.agent.model.ModelExchangeException;
 import io.github.gitsilence.agent.model.ModelRequest;
 import io.github.gitsilence.agent.model.ModelResponse;
 import io.github.gitsilence.agent.model.stream.ModelStream;
@@ -17,6 +19,8 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 public abstract class AbstractHttpChatModel implements StreamingChatModel {
+
+    private static final int MAX_EXCHANGE_RESPONSE_CHARACTERS = 2 * 1024 * 1024;
 
     private final ObjectMapper mapper;
     private final HttpTransport transport;
@@ -42,18 +46,37 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
 
     @Override
     public CompletableFuture<ModelResponse> generate(ModelRequest request) {
+        final boolean captureExchange =
+            request.isModelExchangeCaptureEnabled();
         final HttpRequestData httpRequest;
-        final CompletableFuture<HttpResponseData> httpResponse;
         try {
             httpRequest = request(request, false);
+        } catch (Throwable error) {
+            return Futures.failed(error);
+        }
+        final CompletableFuture<HttpResponseData> httpResponse;
+        try {
             httpResponse = transport.post(httpRequest);
             if (httpResponse == null) {
-                return Futures.failed(new IllegalStateException(
+                Throwable failure = new IllegalStateException(
                     "HTTP transport returned null future"
+                );
+                return Futures.failed(exchangeFailure(
+                    captureExchange,
+                    "HTTP transport returned null future",
+                    failure,
+                    httpRequest,
+                    false
                 ));
             }
         } catch (Throwable error) {
-            return Futures.failed(error);
+            return Futures.failed(exchangeFailure(
+                captureExchange,
+                providerName() + " transport failed",
+                error,
+                httpRequest,
+                false
+            ));
         }
 
         final CompletableFuture<ModelResponse> result =
@@ -63,26 +86,72 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
                 return;
             }
             if (error != null) {
-                result.completeExceptionally(Futures.unwrap(error));
+                Throwable actual = Futures.unwrap(error);
+                result.completeExceptionally(exchangeFailure(
+                    captureExchange,
+                    providerName() + " transport failed",
+                    actual,
+                    httpRequest,
+                    false
+                ));
                 return;
             }
+            ModelExchange exchange = null;
             try {
                 if (response == null) {
-                    throw new ModelException("HTTP transport returned null response");
-                }
-                if (!response.isSuccessful()) {
+                    if (captureExchange) {
+                        exchange = exchange(
+                            httpRequest,
+                            false,
+                            0,
+                            "",
+                            "application/json",
+                            false
+                        );
+                        throw new ModelExchangeException(
+                            "HTTP transport returned null response", exchange
+                        );
+                    }
                     throw new ModelException(
-                        providerName() + " returned HTTP " + response.getStatus()
-                            + ": " + truncate(response.getBody(), 4000)
+                        "HTTP transport returned null response"
                     );
                 }
-                result.complete(decodeResponse(mapper.readTree(response.getBody())));
-            } catch (ModelException e) {
+                if (captureExchange) {
+                    exchange = exchange(
+                        httpRequest,
+                        false,
+                        response.getStatus(),
+                        response.getBody(),
+                        "application/json",
+                        false
+                    );
+                }
+                if (!response.isSuccessful()) {
+                    String message = providerName() + " returned HTTP "
+                        + response.getStatus() + ": "
+                        + truncate(response.getBody(), 4000);
+                    if (captureExchange) {
+                        throw new ModelExchangeException(message, exchange);
+                    }
+                    throw new ModelException(message);
+                }
+                ModelResponse decoded = decodeResponse(
+                    mapper.readTree(response.getBody())
+                );
+                result.complete(captureExchange
+                    ? decoded.withExchange(exchange) : decoded);
+            } catch (ModelExchangeException e) {
                 result.completeExceptionally(e);
+            } catch (ModelException e) {
+                result.completeExceptionally(captureExchange
+                    ? new ModelExchangeException(e.getMessage(), e, exchange)
+                    : e);
             } catch (Exception e) {
-                result.completeExceptionally(new ModelException(
-                    providerName() + " response decoding failed", e
-                ));
+                String message = providerName()
+                    + " response decoding failed";
+                result.completeExceptionally(captureExchange
+                    ? new ModelExchangeException(message, e, exchange)
+                    : new ModelException(message, e));
             }
         });
         result.whenComplete((response, error) -> {
@@ -97,23 +166,55 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
     public ModelStream generateStream(ModelRequest request,
                                       final ModelStreamListener listener) {
         Objects.requireNonNull(listener, "listener");
+        final boolean captureExchange =
+            request.isModelExchangeCaptureEnabled();
         final HttpRequestData httpRequest;
-        final ModelStreamDecoder decoder;
         try {
             httpRequest = request(request, true);
-            decoder = newStreamDecoder(listener);
         } catch (Throwable error) {
             notifyError(listener, error);
             return new ModelStream(Futures.failed(error), () -> { });
         }
+        final ModelStreamDecoder decoder;
+        try {
+            decoder = newStreamDecoder(listener);
+        } catch (Throwable error) {
+            Throwable exchanged = exchangeFailure(
+                captureExchange,
+                providerName() + " streaming decoder initialization failed",
+                error,
+                httpRequest,
+                true
+            );
+            notifyError(listener, exchanged);
+            return new ModelStream(Futures.failed(exchanged), () -> { });
+        }
         final CompletableFuture<ModelResponse> completion =
             new CompletableFuture<ModelResponse>();
+        final BoundedSseCapture responseCapture = new BoundedSseCapture(
+            MAX_EXCHANGE_RESPONSE_CHARACTERS
+        );
         final HttpStreamHandle stream;
         try {
-            stream = transport.postSse(httpRequest, decoder::onEvent);
+            stream = transport.postSse(httpRequest, event -> {
+                if (captureExchange) responseCapture.append(event);
+                decoder.onEvent(event);
+            });
+            if (stream == null) {
+                throw new IllegalStateException(
+                    "HTTP transport returned null stream"
+                );
+            }
         } catch (Throwable error) {
-            notifyError(listener, error);
-            completion.completeExceptionally(error);
+            Throwable actual = exchangeFailure(
+                captureExchange,
+                providerName() + " streaming transport failed",
+                error,
+                httpRequest,
+                true
+            );
+            notifyError(listener, actual);
+            completion.completeExceptionally(actual);
             return new ModelStream(completion, () -> { });
         }
         stream.completion().whenComplete((ignored, error) -> {
@@ -122,17 +223,49 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
             }
             if (error != null) {
                 Throwable actual = Futures.unwrap(error);
-                notifyError(listener, actual);
-                completion.completeExceptionally(actual);
+                Throwable exchanged = exchangeFailure(
+                    captureExchange,
+                    providerName() + " streaming request failed",
+                    actual,
+                    httpRequest,
+                    true,
+                    responseCapture.body(),
+                    responseCapture.isTruncated()
+                );
+                notifyError(listener, exchanged);
+                completion.completeExceptionally(exchanged);
                 return;
             }
             try {
-                ModelResponse response = decoder.finish();
+                ModelResponse decoded = decoder.finish();
+                ModelResponse response;
+                if (captureExchange) {
+                    ModelExchange exchange = exchange(
+                        httpRequest,
+                        true,
+                        0,
+                        responseCapture.body(),
+                        "text/event-stream",
+                        responseCapture.isTruncated()
+                    );
+                    response = decoded.withExchange(exchange);
+                } else {
+                    response = decoded;
+                }
                 listener.onComplete(response);
                 completion.complete(response);
             } catch (Throwable finishError) {
-                notifyError(listener, finishError);
-                completion.completeExceptionally(finishError);
+                Throwable exchanged = exchangeFailure(
+                    captureExchange,
+                    providerName() + " streaming response decoding failed",
+                    finishError,
+                    httpRequest,
+                    true,
+                    responseCapture.body(),
+                    responseCapture.isTruncated()
+                );
+                notifyError(listener, exchanged);
+                completion.completeExceptionally(exchanged);
             }
         });
         return new ModelStream(completion, stream::cancel);
@@ -183,6 +316,89 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
         }
     }
 
+    private ModelExchange exchange(HttpRequestData request,
+                                   boolean streaming,
+                                   int responseStatus,
+                                   String responseBody,
+                                   String responseMediaType,
+                                   boolean responseTruncated) {
+        String capturedResponse = responseBody == null ? "" : responseBody;
+        boolean truncated = responseTruncated;
+        if (capturedResponse.length() > MAX_EXCHANGE_RESPONSE_CHARACTERS) {
+            capturedResponse = capturedResponse.substring(
+                0, MAX_EXCHANGE_RESPONSE_CHARACTERS
+            );
+            truncated = true;
+        }
+        return new ModelExchange(
+            providerName(),
+            safeEndpoint(request.getUrl()),
+            streaming,
+            request.getBody(),
+            responseStatus,
+            capturedResponse,
+            responseMediaType,
+            truncated
+        );
+    }
+
+    private Throwable exchangeFailure(boolean captureExchange,
+                                      String message,
+                                      Throwable cause,
+                                      HttpRequestData request,
+                                      boolean streaming) {
+        if (!captureExchange) return cause;
+        if (cause instanceof ModelExchangeException) return cause;
+        int status = cause instanceof HttpTransportException
+            ? ((HttpTransportException) cause).getStatus() : 0;
+        String body = cause instanceof HttpTransportException
+            ? ((HttpTransportException) cause).getResponseBody() : "";
+        String mediaType = streaming && status == 0
+            ? "text/event-stream" : "application/json";
+        return new ModelExchangeException(
+            message,
+            cause,
+            exchange(request, streaming, status, body, mediaType, false)
+        );
+    }
+
+    private Throwable exchangeFailure(boolean captureExchange,
+                                      String message,
+                                      Throwable cause,
+                                      HttpRequestData request,
+                                      boolean streaming,
+                                      String responseBody,
+                                      boolean responseTruncated) {
+        if (!captureExchange) return cause;
+        if (cause instanceof ModelExchangeException) return cause;
+        if (cause instanceof HttpTransportException) {
+            return exchangeFailure(
+                true, message, cause, request, streaming
+            );
+        }
+        return new ModelExchangeException(
+            message,
+            cause,
+            exchange(
+                request,
+                streaming,
+                0,
+                responseBody,
+                "text/event-stream",
+                responseTruncated
+            )
+        );
+    }
+
+    private static String safeEndpoint(String value) {
+        int query = value.indexOf('?');
+        int fragment = value.indexOf('#');
+        int end = value.length();
+        if (query >= 0) end = Math.min(end, query);
+        if (fragment >= 0) end = Math.min(end, fragment);
+        return value.substring(0, end);
+    }
+
     private static void notifyError(ModelStreamListener listener, Throwable error) {
         try {
             listener.onError(error);
@@ -204,5 +420,51 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
             return "";
         }
         return value.length() <= maximum ? value : value.substring(0, maximum);
+    }
+
+    private static final class BoundedSseCapture {
+        private final int maximum;
+        private final StringBuilder body = new StringBuilder();
+        private boolean truncated;
+
+        private BoundedSseCapture(int maximum) {
+            this.maximum = maximum;
+        }
+
+        private void append(SseEvent event) {
+            if (truncated) return;
+            String value = event.getRaw().isEmpty()
+                ? reconstruct(event) : event.getRaw();
+            int remaining = maximum - body.length();
+            if (value.length() <= remaining) {
+                body.append(value);
+                return;
+            }
+            if (remaining > 0) body.append(value, 0, remaining);
+            truncated = true;
+        }
+
+        private String body() {
+            return body.toString();
+        }
+
+        private boolean isTruncated() {
+            return truncated;
+        }
+
+        private static String reconstruct(SseEvent event) {
+            StringBuilder value = new StringBuilder();
+            if (event.getId() != null) {
+                value.append("id: ").append(event.getId()).append('\n');
+            }
+            if (!"message".equals(event.getEvent())) {
+                value.append("event: ").append(event.getEvent()).append('\n');
+            }
+            String[] lines = event.getData().split("\\n", -1);
+            for (String line : lines) {
+                value.append("data: ").append(line).append('\n');
+            }
+            return value.append('\n').toString();
+        }
     }
 }

@@ -29,8 +29,11 @@ public final class ModelInvocation {
     }
 
     public ModelInvocation withRequest(ModelRequest request) {
+        Objects.requireNonNull(request, "request");
+        ModelRequest effective = this.request.isModelExchangeCaptureEnabled()
+            ? request.withModelExchangeCaptureEnabled(true) : request;
         return new ModelInvocation(
-            turnId, agentName, step, request, state, streaming
+            turnId, agentName, step, effective, state, streaming
         );
     }
 

@@ -21,7 +21,8 @@ The first version includes:
   browser choice persisted locally;
 - a Turn detail page with error context, usage, correlation fields,
   attributes, a merged Parent/SubAgent call graph, clickable node request and
-  response inspectors, and a Turn/Step/Model/Tool span waterfall;
+  response inspectors, separate Provider/SDK payload tabs, and a
+  Turn/Step/Model/Tool span waterfall;
 - individual and multi-select Trace deletion from the dashboard;
 - atomic local-file persistence behind a small `TraceStore` interface.
 
@@ -179,8 +180,9 @@ The local `TraceStore` is deliberately optimized for an MVP:
 
 For production or horizontal scaling, implement the same `TraceStore`
 interface with PostgreSQL, ClickHouse, object storage, or a telemetry backend.
-The receiver accepts schema versions 1 and 2. Version 2 adds structured node
-input and output while version 1 remains readable for existing local traces.
+The receiver accepts schema versions 1, 2, and 3. Version 3 adds raw Provider
+request/response payloads and separate normalized SDK views; older local
+traces remain readable.
 
 Build and run the standalone server with:
 
@@ -203,6 +205,14 @@ disable this with `.captureContent(false)`. Trace content, names, errors,
 metadata, and resource attributes can all be sensitive. Protect the data
 directory, use HTTPS outside localhost, rotate ingestion keys, and apply
 retention appropriate to the application.
+
+For bundled OpenAI-compatible, OpenAI Responses, and Anthropic HTTP Models,
+schema version 3 shows the actual Provider JSON fields under **Provider
+request** and **Provider response**. The canonical Core representation remains
+available under **SDK input** and **SDK output**. Streaming responses show the
+captured SSE event blocks with normalized LF line endings. Provider request
+headers are excluded, and
+captured endpoint URLs omit query strings and fragments.
 
 Platform delivery never blocks the Agent Loop on network I/O. A bounded queue
 drops the newest trace when full and exposes counters on

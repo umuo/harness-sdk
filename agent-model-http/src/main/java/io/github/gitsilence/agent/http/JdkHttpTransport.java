@@ -172,17 +172,23 @@ public final class JdkHttpTransport implements HttpTransport {
             String event = null;
             String id = null;
             StringBuilder data = new StringBuilder();
+            StringBuilder raw = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.isEmpty()) {
+                    raw.append('\n');
                     if (data.length() > 0 || event != null) {
-                        listener.onEvent(new SseEvent(event, data.toString(), id));
+                        listener.onEvent(new SseEvent(
+                            event, data.toString(), id, raw.toString()
+                        ));
                     }
                     event = null;
                     id = null;
                     data.setLength(0);
+                    raw.setLength(0);
                     continue;
                 }
+                raw.append(line).append('\n');
                 if (line.charAt(0) == ':') {
                     continue;
                 }
@@ -204,7 +210,9 @@ public final class JdkHttpTransport implements HttpTransport {
                 }
             }
             if (data.length() > 0 || event != null) {
-                listener.onEvent(new SseEvent(event, data.toString(), id));
+                listener.onEvent(new SseEvent(
+                    event, data.toString(), id, raw.toString()
+                ));
             }
         }
     }
