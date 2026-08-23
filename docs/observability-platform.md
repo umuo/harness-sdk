@@ -22,6 +22,7 @@ The first version includes:
 - a Turn detail page with error context, usage, correlation fields,
   attributes, a merged Parent/SubAgent call graph, clickable node request and
   response inspectors, and a Turn/Step/Model/Tool span waterfall;
+- individual and multi-select Trace deletion from the dashboard;
 - atomic local-file persistence behind a small `TraceStore` interface.
 
 The web project is intentionally outside the Maven reactor. Java 8 remains the
@@ -134,6 +135,21 @@ Do not add either administrator or application Keys to Git or logs. Terminate
 TLS at a reverse proxy or hosting platform. Trace dashboard and GET query APIs
 remain readable without an administrator session in this MVP; place the entire
 service behind an authenticated gateway if Trace data must not be public.
+
+Trace deletion is permanent and uses the same administrator authentication as
+application management. Browser requests must also pass a same-origin check.
+Each record is addressed by both application ID and Turn ID, so deleting one
+application's Turn cannot remove another application's record with the same
+Turn ID. The batch API accepts at most 500 identities per request; the
+dashboard automatically splits larger selections into bounded requests.
+
+```text
+DELETE /api/traces/{turnId}?applicationId={applicationId}
+DELETE /api/traces
+```
+
+The batch request body is `{ "traces": [{ "turnId": "...", "applicationId":
+"..." }] }`.
 
 ## Configuration
 

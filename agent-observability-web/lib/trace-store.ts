@@ -3,6 +3,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type {
   AgentTrace,
+  TraceDeleteResult,
+  TraceIdentity,
   TraceListOptions,
   TraceStore,
 } from "./trace-types";
@@ -11,26 +13,28 @@ import { validateTrace } from "./trace-validation";
 
 const DEFAULT_RETENTION = 5_000;
 
-class LocalFileTraceStore implements TraceStore {
+export class LocalFileTraceStore implements TraceStore {
   private readonly directory: string;
   private readonly retention: number;
   private writeChain: Promise<void> = Promise.resolve();
 
-  constructor() {
-    this.directory = platformDataDirectory();
-    this.retention = positiveInteger(
+  constructor(
+    directory = platformDataDirectory(),
+    retention = positiveInteger(
       process.env.AGENT_OBSERVABILITY_RETENTION,
       DEFAULT_RETENTION,
-    );
+    ),
+  ) {
+    this.directory = directory;
+    this.retention = retention;
   }
 
   save(trace: AgentTrace): Promise<void> {
-    const operation = this.writeChain.then(() => this.persist(trace));
-    this.writeChain = operation.catch(() => undefined);
-    return operation;
+    return this.enqueue(() => this.persist(trace));
   }
 
   async get(turnId: string, applicationId = ""): Promise<AgentTrace | null> {
+    await this.writeChain;
     if (!turnId || turnId.length > 256) return null;
     try {
       const content = await fs.readFile(
@@ -95,6 +99,60 @@ class LocalFileTraceStore implements TraceStore {
           Date.parse(right.startedAt) - Date.parse(left.startedAt),
       )
       .slice(0, Math.min(Math.max(options.limit ?? 100, 1), 1_000));
+  }
+
+  delete(turnId: string, applicationId = ""): Promise<boolean> {
+    return this.enqueue(async () => {
+      try {
+        await fs.unlink(this.fileFor(turnId, applicationId));
+        return true;
+      } catch (error) {
+        if (isMissing(error)) return false;
+        throw error;
+      }
+    });
+  }
+
+  deleteMany(identities: TraceIdentity[]): Promise<TraceDeleteResult> {
+    return this.enqueue(async () => {
+      const unique = new Map<string, Required<TraceIdentity>>();
+      identities.forEach((identity) => {
+        const applicationId = identity.applicationId ?? "";
+        unique.set(`${applicationId}\u0000${identity.turnId}`, {
+          applicationId,
+          turnId: identity.turnId,
+        });
+      });
+
+      let deleted = 0;
+      let missing = 0;
+      await Promise.all(
+        Array.from(unique.values()).map(async (identity) => {
+          try {
+            await fs.unlink(
+              this.fileFor(identity.turnId, identity.applicationId),
+            );
+            deleted += 1;
+          } catch (error) {
+            if (isMissing(error)) {
+              missing += 1;
+              return;
+            }
+            throw error;
+          }
+        }),
+      );
+      return { deleted, missing };
+    });
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const queued = this.writeChain.then(operation);
+    this.writeChain = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
   }
 
   private async persist(trace: AgentTrace): Promise<void> {

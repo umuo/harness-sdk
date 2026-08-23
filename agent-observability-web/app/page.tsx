@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { RefreshControl } from "../components/refresh-control";
-import { StatusBadge } from "../components/status-badge";
+import { TraceTable } from "../components/trace-table";
+import { isCurrentAdmin } from "../lib/admin-auth";
 import { currentLocale } from "../lib/current-locale";
 import {
   formatDuration,
   formatNumber,
-  formatTimestamp,
   percentage,
 } from "../lib/format";
 import { dictionary } from "../lib/i18n";
@@ -40,6 +40,7 @@ export default async function Dashboard({
   const agent = parameters.agent?.trim() ?? "";
   const traces = filter(allTraces, status, agent);
   const metrics = summarize(allTraces);
+  const canDelete = await isCurrentAdmin();
 
   return (
     <>
@@ -137,74 +138,13 @@ export default async function Dashboard({
             connect={dashboard.empty.connect}
           />
         ) : (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>{dashboard.table.agent}</th>
-                  <th>{dashboard.table.application}</th>
-                  <th>{dashboard.table.status}</th>
-                  <th>{dashboard.table.started}</th>
-                  <th>{dashboard.table.latency}</th>
-                  <th>{dashboard.table.steps}</th>
-                  <th>{dashboard.table.modelTool}</th>
-                  <th>{dashboard.table.tokens}</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {traces.map((trace) => (
-                  <tr key={`${trace.applicationId}:${trace.turnId}`}>
-                    <td>
-                      <div className="agent-cell">
-                        <span className="agent-glyph">
-                          {trace.agentName.slice(0, 1).toUpperCase()}
-                        </span>
-                        <span>
-                          <strong>{trace.agentName}</strong>
-                          <small title={trace.turnId}>{shortId(trace.turnId)}</small>
-                        </span>
-                      </div>
-                    </td>
-                    <td className="muted">
-                      {applicationName(
-                        trace.applicationId,
-                        trace.applicationName,
-                        applications,
-                        dashboard.table.unassigned,
-                      )}
-                    </td>
-                    <td>
-                      <StatusBadge status={trace.status} locale={locale} />
-                    </td>
-                    <td className="muted">
-                      {formatTimestamp(trace.startedAt, locale)}
-                    </td>
-                    <td>{formatDuration(trace.durationNanos)}</td>
-                    <td>{trace.stepCount}</td>
-                    <td>
-                      {trace.modelCallCount} <span className="slash">/</span>{" "}
-                      {trace.toolCallCount}
-                      {trace.toolErrorCount > 0 && (
-                        <span className="error-count">
-                          {" "}+{trace.toolErrorCount} {dashboard.table.error}
-                        </span>
-                      )}
-                    </td>
-                    <td>{formatNumber(trace.usage.totalTokens, locale)}</td>
-                    <td>
-                      <Link
-                        className="inspect-link"
-                        href={traceDetailHref(trace.turnId, trace.applicationId)}
-                      >
-                        {dashboard.table.inspect}
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <TraceTable
+            applications={applications}
+            canDelete={canDelete}
+            copy={dashboard.table}
+            initialTraces={traces}
+            locale={locale}
+          />
         )}
       </section>
     </>
@@ -283,28 +223,4 @@ function summarize(traces: AgentTrace[]) {
     toolCalls: traces.reduce((sum, trace) => sum + trace.toolCallCount, 0),
     toolErrors: traces.reduce((sum, trace) => sum + trace.toolErrorCount, 0),
   };
-}
-
-function applicationName(
-  applicationId: string,
-  snapshotName: string,
-  applications: Array<{ id: string; name: string }>,
-  unassigned: string,
-): string {
-  if (!applicationId) return unassigned;
-  return (
-    applications.find((application) => application.id === applicationId)
-      ?.name ?? (snapshotName || applicationId)
-  );
-}
-
-function traceDetailHref(turnId: string, applicationId: string): string {
-  const path = `/traces/${encodeURIComponent(turnId)}`;
-  return applicationId
-    ? `${path}?application=${encodeURIComponent(applicationId)}`
-    : path;
-}
-
-function shortId(value: string): string {
-  return value.length > 15 ? `${value.slice(0, 7)}…${value.slice(-5)}` : value;
 }

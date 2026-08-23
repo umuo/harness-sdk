@@ -124,6 +124,16 @@ tbody tr:last-child td { border-bottom: 0; }
 .slash { color: var(--faint); margin: 0 3px; }
 .error-count { color: var(--red); font-size: 10px; }
 .inspect-link { color: var(--mint); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.trace-selection-bar { min-height: 49px; padding: 9px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); background: rgba(8, 15, 13, 0.42); }
+.trace-selection-bar > span { min-width: 82px; color: var(--muted); font-size: 10px; }
+.trace-selection-bar > strong { color: var(--red); font-size: 10px; font-weight: 600; }
+.selection-column { width: 42px; padding-left: 18px; padding-right: 4px; }
+.selection-column input { width: 14px; height: 14px; accent-color: var(--mint); cursor: pointer; }
+.selection-column input:disabled { cursor: wait; opacity: 0.5; }
+.trace-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; white-space: nowrap; }
+.trace-delete-action { border: 0; padding: 0; color: var(--red); background: transparent; cursor: pointer; font-size: 10px; font-weight: 700; }
+.trace-delete-action:hover { color: #ffaaa2; }
+.trace-delete-action:disabled { opacity: 0.45; cursor: wait; }
 
 .status { display: inline-flex; padding: 4px 7px; border-radius: 5px; font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.05em; border: 1px solid var(--border); color: var(--muted); background: rgba(145, 164, 155, 0.08); }
 .status-completed, .status-ok { color: var(--mint); border-color: rgba(114, 229, 172, 0.22); background: rgba(114, 229, 172, 0.08); }

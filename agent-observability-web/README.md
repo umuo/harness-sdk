@@ -7,6 +7,7 @@ The dashboard supports Chinese and English and defaults to Chinese. It also
 provides application CRUD, per-application ingestion Keys, Key rotation, and
 application-scoped Trace filtering. Version 2 traces include a clickable
 Turn/Step/Model/Tool call graph with structured request and response details.
+Administrators can delete one Trace or select and delete records in batches.
 
 Requires Node.js 20.9 or newer.
 

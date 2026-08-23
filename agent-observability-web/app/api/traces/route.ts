@@ -1,4 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAdminRequest } from "../../../lib/admin-auth";
+import {
+  adminRequiredResponse,
+  invalidOriginResponse,
+} from "../../../lib/application-api";
+import {
+  ApiRequestError,
+  readJsonObject,
+  sameOrigin,
+} from "../../../lib/api-security";
 import { ingestionIdentity } from "../../../lib/ingestion-auth";
 import { traceStore } from "../../../lib/trace-store";
 import {
@@ -10,6 +20,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = 2 * 1_024 * 1_024;
+const MAX_DELETE_BATCH = 500;
 
 export async function POST(request: NextRequest) {
   const identity = await ingestionIdentity(request);
@@ -83,6 +94,20 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ traces });
 }
 
+export async function DELETE(request: NextRequest) {
+  if (!sameOrigin(request)) return invalidOriginResponse();
+  if (!isAdminRequest(request)) return adminRequiredResponse();
+
+  try {
+    const body = await readJsonObject(request, 128 * 1_024);
+    const identities = parseTraceIdentities(body.traces);
+    const result = await traceStore.deleteMany(identities);
+    return NextResponse.json(result);
+  } catch (error) {
+    return traceDeleteErrorResponse(error);
+  }
+}
+
 async function readBoundedBody(request: NextRequest): Promise<string> {
   if (!request.body) return "";
   const reader = request.body.getReader();
@@ -106,4 +131,42 @@ class PayloadTooLargeError extends Error {
     super(`Trace payload exceeds ${MAX_BODY_BYTES} bytes`);
     this.name = "PayloadTooLargeError";
   }
+}
+
+function parseTraceIdentities(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ApiRequestError(400, "traces must be a non-empty array");
+  }
+  if (value.length > MAX_DELETE_BATCH) {
+    throw new ApiRequestError(
+      413,
+      `A maximum of ${MAX_DELETE_BATCH} traces can be deleted at once`,
+    );
+  }
+  return value.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new ApiRequestError(400, "Each trace identity must be an object");
+    }
+    const identity = item as Record<string, unknown>;
+    const turnId = identity.turnId;
+    const applicationId = identity.applicationId ?? "";
+    if (typeof turnId !== "string" || !turnId.trim() || turnId.length > 256) {
+      throw new ApiRequestError(400, "Each turnId must be a non-empty string");
+    }
+    if (typeof applicationId !== "string" || applicationId.length > 256) {
+      throw new ApiRequestError(400, "Each applicationId must be a string");
+    }
+    return { turnId, applicationId };
+  });
+}
+
+function traceDeleteErrorResponse(error: unknown) {
+  if (error instanceof ApiRequestError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  console.error("Failed to delete Agent traces", error);
+  return NextResponse.json(
+    { error: "Trace storage unavailable" },
+    { status: 503 },
+  );
 }

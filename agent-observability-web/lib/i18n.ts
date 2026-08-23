@@ -72,6 +72,15 @@ const zh = {
       tokens: "Token",
       error: "个错误",
       inspect: "查看 →",
+      selectAll: "选择全部 Trace",
+      selectTrace: "选择 Trace",
+      selected: "条已选择",
+      delete: "删除",
+      deleteSelected: "批量删除",
+      deleting: "正在删除…",
+      deleteConfirm: "删除后无法恢复，确定删除这条 Trace 吗？",
+      deleteSelectedConfirm: "删除后无法恢复，确定删除选中的 {count} 条 Trace 吗？",
+      deleteFailed: "删除失败，请确认管理员身份或稍后重试。",
     },
     empty: {
       noMatch: "没有符合筛选条件的任务轮次",
@@ -247,6 +256,17 @@ const en = {
       tokens: "Tokens",
       error: "error",
       inspect: "Inspect →",
+      selectAll: "Select all traces",
+      selectTrace: "Select trace",
+      selected: "selected",
+      delete: "Delete",
+      deleteSelected: "Delete selected",
+      deleting: "Deleting…",
+      deleteConfirm: "This cannot be undone. Delete this trace?",
+      deleteSelectedConfirm:
+        "This cannot be undone. Delete the {count} selected traces?",
+      deleteFailed:
+        "Deletion failed. Verify administrator access or try again later.",
     },
     empty: {
       noMatch: "No turns match these filters",

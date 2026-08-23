@@ -58,8 +58,20 @@ export interface TraceListOptions {
   traceId?: string;
 }
 
+export interface TraceIdentity {
+  turnId: string;
+  applicationId?: string;
+}
+
+export interface TraceDeleteResult {
+  deleted: number;
+  missing: number;
+}
+
 export interface TraceStore {
   save(trace: AgentTrace): Promise<void>;
   get(turnId: string, applicationId?: string): Promise<AgentTrace | null>;
   list(options?: TraceListOptions): Promise<AgentTrace[]>;
+  delete(turnId: string, applicationId?: string): Promise<boolean>;
+  deleteMany(identities: TraceIdentity[]): Promise<TraceDeleteResult>;
 }
