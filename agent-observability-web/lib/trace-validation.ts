@@ -13,7 +13,7 @@ export class TraceValidationError extends Error {
 export function validateTrace(input: unknown): AgentTrace {
   const value = record(input, "trace");
   const schemaVersion = text(value.schemaVersion, "schemaVersion", 16);
-  if (schemaVersion !== "1") {
+  if (schemaVersion !== "1" && schemaVersion !== "2") {
     throw new TraceValidationError(
       `Unsupported schemaVersion '${schemaVersion}'`,
     );
@@ -27,7 +27,7 @@ export function validateTrace(input: unknown): AgentTrace {
   }
 
   return {
-    schemaVersion: "1",
+    schemaVersion,
     traceId: text(value.traceId, "traceId", 256),
     turnId: text(value.turnId, "turnId", 256),
     parentTurnId: optionalText(value.parentTurnId, "parentTurnId", 256),
@@ -79,6 +79,8 @@ function parseSpan(input: unknown, index: number): TraceSpan {
       value.durationNanos,
       `${prefix}.durationNanos`,
     ),
+    input: optionalAttributes(value.input, `${prefix}.input`),
+    output: optionalAttributes(value.output, `${prefix}.output`),
     attributes: attributes(value.attributes, `${prefix}.attributes`),
     errorType: optionalText(value.errorType, `${prefix}.errorType`, MAX_TEXT),
     errorMessage: optionalText(
@@ -100,6 +102,11 @@ function usage(input: unknown) {
 
 function attributes(input: unknown, name: string): TraceAttributes {
   return record(input, name);
+}
+
+function optionalAttributes(input: unknown, name: string): TraceAttributes {
+  if (input === undefined || input === null) return {};
+  return attributes(input, name);
 }
 
 function record(input: unknown, name: string): Record<string, unknown> {

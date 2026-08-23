@@ -16,13 +16,15 @@ export interface TraceSpan {
   startedAt: string;
   endedAt: string;
   durationNanos: number;
+  input: TraceAttributes;
+  output: TraceAttributes;
   attributes: TraceAttributes;
   errorType: string;
   errorMessage: string;
 }
 
 export interface AgentTrace {
-  schemaVersion: "1";
+  schemaVersion: "1" | "2";
   traceId: string;
   turnId: string;
   parentTurnId: string;
@@ -53,6 +55,7 @@ export interface TraceListOptions {
   status?: string;
   agentName?: string;
   applicationId?: string;
+  traceId?: string;
 }
 
 export interface TraceStore {

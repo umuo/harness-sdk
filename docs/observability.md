@@ -7,6 +7,8 @@ turns existing lifecycle events into two useful outputs without changing Agent
 execution:
 
 - one immutable `AgentTrace` per completed, stopped, failed, or cancelled Turn;
+- structured input and output on every Turn, Model, and Tool span when content
+  capture is enabled;
 - a process-local `AgentMetricsSnapshot` with Turn, Step, Model, Tool, Token,
   error, duration, active-Turn, and exporter-failure counters.
 
@@ -27,6 +29,14 @@ Spans are returned as a flat immutable list with `spanId` and `parentSpanId`,
 which is convenient for OpenTelemetry, logging, database, or test adapters.
 Their identifiers are opaque SDK identifiers; an exporter may translate them
 to the identifier format required by its backend.
+
+Each `AgentSpan` exposes `getInput()` and `getOutput()` separately from indexed
+attributes. Model nodes contain the provider-neutral `ModelRequest` and
+`ModelResponse` shape: messages, available Tool definitions, Model options,
+assistant output, Tool calls, usage, and provider metadata. Tool nodes contain
+parsed arguments, result content, structured errors, metadata, and output-file
+references. This is the logical Agent/Model boundary, not a vendor's raw HTTP
+headers or transport body.
 
 ## Basic usage
 
@@ -92,6 +102,11 @@ AgentObservability custom = AgentObservability.builder()
     .build();
 ```
 
+The `platform(...)` convenience methods enable bounded content capture so the
+trace debugger can display Model requests and responses immediately. To keep
+platform traces metadata-only, configure the transport through the Builder
+and call `.captureContent(false)`.
+
 Register exactly the chosen instance with `.plugin(observability)`. `OFF`
 returns immediately on every lifecycle event, so it has lower overhead than a
 no-op custom exporter and its local metrics remain zero.
@@ -126,6 +141,7 @@ PlatformTraceExporter transport = PlatformTraceExporter.builder(
 
 AgentObservability observability = AgentObservability.builder()
     .platform(transport)
+    .captureContent(true)
     .attribute("service.name", "coding-assistant")
     .build();
 ```
@@ -175,11 +191,14 @@ Metrics are lock-free snapshots, not histograms or a persistent metrics store.
 
 ## Content privacy
 
-Prompts, model responses, Tool arguments, Tool results, and final answers are
-not captured by default. Counts, names, Token usage, bounded errors, statuses,
-and correlation fields remain available.
+Observability remains disabled unless its Plugin is registered. Custom Builder
+and logging configurations do not capture prompts, Model responses, Tool
+arguments, Tool results, or final answers unless explicitly enabled. The
+`platform(...)` convenience methods do enable bounded content capture because
+the platform's primary purpose is request-level debugging. Use the Builder
+with `.captureContent(false)` for metadata-only platform traces.
 
-Content capture requires an explicit opt-in and is bounded per attribute:
+Captured values are bounded per text field:
 
 ```java
 AgentObservability observability = AgentObservability.builder()
@@ -233,7 +252,8 @@ Agent supervisor = Agent.builder()
 
 Parent and child still own separate mutable Agent States. They export separate
 Turn trace segments sharing one trace ID; the child Turn span points to the
-parent Agent-Tool span.
+parent Agent-Tool span. The bundled platform merges those segments into one
+clickable call graph while retaining separate Turn records.
 
 ## Failure and lifecycle behavior
 
@@ -246,9 +266,10 @@ parent Agent-Tool span.
 - cancellation closes unfinished spans as `CANCELLED`;
 - plugin/exporter failures never alter Agent execution.
 
-The wire format has `schemaVersion: "1"` and is encoded explicitly by
-`AgentTraceJsonCodec`; it does not expose Jackson's representation of the Java
-classes as an accidental protocol. The bundled web service accepts that
-version and provides an MVP trace console. Sampling, histograms,
+The current wire format has `schemaVersion: "2"`; version 2 adds structured
+span `input` and `output`. It is encoded explicitly by `AgentTraceJsonCodec`
+instead of exposing Jackson's representation of Java classes as an accidental
+protocol. The bundled web service continues to read version 1 documents.
+Sampling, histograms,
 OpenTelemetry/vendor SDKs, and production database storage remain outside
 Core. See [Observability web platform](observability-platform.md).

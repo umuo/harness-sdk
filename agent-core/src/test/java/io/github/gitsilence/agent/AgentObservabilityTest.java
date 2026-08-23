@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -97,11 +98,12 @@ class AgentObservabilityTest {
         assertEquals(firstStep.getSpanId(), firstModel.getParentSpanId());
         assertEquals(firstStep.getSpanId(), tool.getParentSpanId());
         assertEquals(AgentSpanStatus.OK, tool.getStatus());
-        assertFalse(tool.getAttributes().containsKey("agent.tool.arguments"));
-        assertFalse(tool.getAttributes().containsKey("agent.tool.result"));
-        assertFalse(firstModel.getAttributes().containsKey(
-            "agent.model.input.messages"
-        ));
+        assertFalse(tool.getInput().containsKey("arguments"));
+        assertFalse(tool.getOutput().containsKey("content"));
+        assertFalse(firstModel.getInput().containsKey("messages"));
+        assertEquals(1, firstModel.getInput().get("messageCount"));
+        assertEquals(false,
+            firstModel.getAttributes().get("agent.content.captured"));
 
         AgentMetricsSnapshot metrics = observability.metrics();
         assertEquals(1, metrics.getTurnsStarted());
@@ -134,14 +136,16 @@ class AgentObservabilityTest {
         AgentSpan model = only(
             exporter.getTraces().get(0), AgentSpanKind.MODEL, 0
         );
-        String captured = (String) model.getAttributes().get(
-            "agent.model.input.messages"
-        );
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages =
+            (List<Map<String, Object>>) model.getInput().get("messages");
+        String captured = (String) messages.get(0).get("content");
         assertTrue(captured.length() <= 128);
         assertTrue(captured.endsWith("...[truncated]"));
-        assertTrue(String.valueOf(model.getAttributes().get(
-            "agent.model.output.message"
-        )).contains("visible-response"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> response =
+            (Map<String, Object>) model.getOutput().get("message");
+        assertEquals("visible-response", response.get("content"));
     }
 
     @Test
@@ -180,7 +184,7 @@ class AgentObservabilityTest {
         assertEquals(AgentSpanStatus.ERROR, tool.getStatus());
         assertEquals("Tool returned an error", tool.getErrorMessage());
         assertFalse(tool.getErrorMessage().contains("private failure detail"));
-        assertFalse(tool.getAttributes().containsKey("agent.tool.result"));
+        assertFalse(tool.getOutput().containsKey("content"));
         assertEquals(1, observability.metrics().getToolErrors());
     }
 

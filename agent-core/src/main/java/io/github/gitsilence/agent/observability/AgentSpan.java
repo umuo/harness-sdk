@@ -18,6 +18,8 @@ public final class AgentSpan {
     private final Instant startedAt;
     private final Instant endedAt;
     private final long durationNanos;
+    private final Map<String, Object> input;
+    private final Map<String, Object> output;
     private final Map<String, Object> attributes;
     private final String errorType;
     private final String errorMessage;
@@ -31,6 +33,8 @@ public final class AgentSpan {
               Instant startedAt,
               Instant endedAt,
               long durationNanos,
+              Map<String, Object> input,
+              Map<String, Object> output,
               Map<String, Object> attributes,
               String errorType,
               String errorMessage) {
@@ -43,6 +47,8 @@ public final class AgentSpan {
         this.startedAt = Objects.requireNonNull(startedAt, "startedAt");
         this.endedAt = Objects.requireNonNull(endedAt, "endedAt");
         this.durationNanos = Math.max(0L, durationNanos);
+        this.input = immutableMap(input, "input");
+        this.output = immutableMap(output, "output");
         this.attributes = Collections.unmodifiableMap(
             new LinkedHashMap<String, Object>(Objects.requireNonNull(
                 attributes, "attributes"
@@ -61,6 +67,8 @@ public final class AgentSpan {
     public Instant getStartedAt() { return startedAt; }
     public Instant getEndedAt() { return endedAt; }
     public long getDurationNanos() { return durationNanos; }
+    public Map<String, Object> getInput() { return input; }
+    public Map<String, Object> getOutput() { return output; }
     public Map<String, Object> getAttributes() { return attributes; }
     public String getErrorType() { return errorType; }
     public String getErrorMessage() { return errorMessage; }
@@ -75,5 +83,13 @@ public final class AgentSpan {
 
     private static String optional(String value) {
         return value == null ? "" : value;
+    }
+
+    private static Map<String, Object> immutableMap(
+            Map<String, Object> value,
+            String name) {
+        return Collections.unmodifiableMap(
+            new LinkedHashMap<String, Object>(Objects.requireNonNull(value, name))
+        );
     }
 }

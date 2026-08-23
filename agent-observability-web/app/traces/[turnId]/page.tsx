@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { StatusBadge } from "../../../components/status-badge";
+import { TraceGraph } from "../../../components/trace-graph";
 import { applicationStore } from "../../../lib/application-store";
 import { currentLocale } from "../../../lib/current-locale";
 import {
@@ -27,7 +28,8 @@ export default async function TraceDetail({
   searchParams: Promise<{ application?: string }>;
 }) {
   const locale = await currentLocale();
-  const copy = dictionary(locale).detail;
+  const translations = dictionary(locale);
+  const copy = translations.detail;
   const { turnId } = await params;
   const applicationId = (await searchParams).application?.trim() ?? "";
   const trace = await traceStore.get(turnId, applicationId);
@@ -35,12 +37,27 @@ export default async function TraceDetail({
   const application = applicationId
     ? await applicationStore.get(applicationId)
     : null;
-
-  const total = Math.max(trace.durationNanos, 1);
-  const base = Date.parse(trace.startedAt);
-  const spans = [...trace.spans].sort(
+  const relatedTraces = await traceStore.list({
+    limit: 1_000,
+    applicationId,
+    traceId: trace.traceId,
+  });
+  const spansById = new Map(
+    relatedTraces
+      .flatMap((segment) => segment.spans)
+      .map((span) => [span.spanId, span] as const),
+  );
+  for (const span of trace.spans) spansById.set(span.spanId, span);
+  const spans = [...spansById.values()].sort(
     (left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt),
   );
+  const base = spans.length
+    ? Math.min(...spans.map((span) => Date.parse(span.startedAt)))
+    : Date.parse(trace.startedAt);
+  const end = spans.length
+    ? Math.max(...spans.map((span) => Date.parse(span.endedAt)))
+    : Date.parse(trace.endedAt);
+  const total = Math.max((end - base) * 1_000_000, trace.durationNanos, 1);
 
   return (
     <>
@@ -126,6 +143,38 @@ export default async function TraceDetail({
           <MetadataRow label={copy.streamEvents} value={String(trace.modelStreamEventCount)} />
           <Attributes value={trace.attributes} empty={copy.noResourceAttributes} />
         </article>
+      </section>
+
+      <section className="panel trace-graph-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">{copy.graph}</p>
+            <h2>{copy.graphTitle}</h2>
+          </div>
+          <span className="graph-segment-count">
+            {relatedTraces.length} {copy.traceSegments}
+          </span>
+        </div>
+        <TraceGraph
+          spans={spans}
+          copy={{
+            input: copy.input,
+            output: copy.output,
+            metadata: copy.metadata,
+            emptyInput: copy.emptyInput,
+            emptyOutput: copy.emptyOutput,
+            contentNotCaptured: copy.contentNotCaptured,
+            selectNode: copy.selectNode,
+            status: copy.status,
+            startedAt: copy.startedAt,
+            duration: copy.duration,
+            spanId: copy.spanId,
+            parentSpanId: copy.parent,
+            attributes: copy.attributes,
+            kinds: { ...translations.kind },
+            statuses: { ...translations.status },
+          }}
+        />
       </section>
 
       <section className="panel waterfall-panel">

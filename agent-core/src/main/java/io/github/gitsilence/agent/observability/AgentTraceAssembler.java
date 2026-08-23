@@ -1,6 +1,8 @@
 package io.github.gitsilence.agent.observability;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.gitsilence.agent.model.ChatMessage;
+import io.github.gitsilence.agent.model.ModelOptions;
 import io.github.gitsilence.agent.model.ModelRequest;
 import io.github.gitsilence.agent.model.ModelResponse;
 import io.github.gitsilence.agent.model.ToolCall;
@@ -10,7 +12,9 @@ import io.github.gitsilence.agent.runtime.AgentEventType;
 import io.github.gitsilence.agent.runtime.ExecutionStatus;
 import io.github.gitsilence.agent.state.AgentStateSnapshot;
 import io.github.gitsilence.agent.tool.ToolErrorInfo;
+import io.github.gitsilence.agent.tool.ToolDefinition;
 import io.github.gitsilence.agent.tool.ToolExecutionRecord;
+import io.github.gitsilence.agent.tool.ToolOutputReference;
 import io.github.gitsilence.agent.tool.ToolResult;
 
 import java.nio.charset.StandardCharsets;
@@ -25,6 +29,11 @@ import java.util.UUID;
 
 /** Internal event reducer for one Turn. */
 final class AgentTraceAssembler {
+
+    private static final ObjectMapper CONTENT_MAPPER = new ObjectMapper();
+    private static final int MAX_CAPTURED_MESSAGES = 200;
+    private static final int MAX_CAPTURED_TOOLS = 100;
+    private static final int MAX_CAPTURED_TOOL_CALLS = 100;
 
     private final String traceId;
     private final String turnId;
@@ -89,6 +98,11 @@ final class AgentTraceAssembler {
             event.getTimestamp()
         );
         turn.attributes.putAll(traceAttributes);
+        turn.attributes.put("agent.content.captured", captureContent);
+        turn.input.put("messageCount", state.getMessages().size());
+        if (captureContent) {
+            captureMessages(turn.input, state.getMessages());
+        }
         spans.put(turn.spanId, turn);
     }
 
@@ -139,6 +153,7 @@ final class AgentTraceAssembler {
             event.getTimestamp()
         );
         span.attributes.put("agent.step", event.getStep());
+        span.input.put("step", event.getStep());
         spans.put(id, span);
     }
 
@@ -159,12 +174,8 @@ final class AgentTraceAssembler {
         span.attributes.put(
             "agent.model.available_tool_count", request.getTools().size()
         );
-        if (captureContent) {
-            span.attributes.put(
-                "agent.model.input.messages",
-                limit(renderMessages(request.getMessages()))
-            );
-        }
+        span.attributes.put("agent.content.captured", captureContent);
+        span.input.putAll(modelInput(request));
         spans.put(id, span);
     }
 
@@ -191,10 +202,15 @@ final class AgentTraceAssembler {
             "agent.model.output.tool_call_count",
             assistant.getToolCalls().size()
         );
+        span.output.put("toolCallCount", assistant.getToolCalls().size());
+        if (usage != null) {
+            span.output.put("usage", usage(usage));
+        }
         if (captureContent) {
-            span.attributes.put(
-                "agent.model.output.message", limit(renderMessage(assistant))
-            );
+            span.output.put("message", message(assistant));
+            if (!response.getMetadata().isEmpty()) {
+                span.output.put("metadata", response.getMetadata());
+            }
         }
         span.finish(event.getTimestamp(), AgentSpanStatus.OK, null);
     }
@@ -231,10 +247,11 @@ final class AgentTraceAssembler {
         span.attributes.put(
             "agent.tool.argument.characters", call.getArguments().length()
         );
+        span.attributes.put("agent.content.captured", captureContent);
+        span.input.put("name", call.getName());
+        span.input.put("callId", call.getId());
         if (captureContent) {
-            span.attributes.put(
-                "agent.tool.arguments", limit(call.getArguments())
-            );
+            span.input.put("arguments", jsonOrText(call.getArguments()));
         }
         spans.put(id, span);
     }
@@ -257,17 +274,28 @@ final class AgentTraceAssembler {
             "agent.tool.output_reference_count",
             result.getOutputReferences().size()
         );
+        span.output.put("error", result.isError());
+        span.output.put("characters", result.getContent().length());
+        span.output.put("outputReferenceCount", result.getOutputReferences().size());
         ToolErrorInfo errorInfo = result.getErrorInfo();
         if (errorInfo != null) {
             span.attributes.put("agent.tool.error.code", errorInfo.getCode());
             span.attributes.put(
                 "agent.tool.error.retryable", errorInfo.isRetryable()
             );
+            span.output.put("errorInfo", errorInfo(errorInfo));
         }
         if (captureContent) {
-            span.attributes.put(
-                "agent.tool.result", limit(result.getContent())
-            );
+            span.output.put("content", limit(result.getContent()));
+            if (!result.getMetadata().isEmpty()) {
+                span.output.put("metadata", result.getMetadata());
+            }
+            if (!result.getOutputReferences().isEmpty()) {
+                span.output.put(
+                    "outputReferences",
+                    outputReferences(result.getOutputReferences())
+                );
+            }
         }
         if (result.isError()) {
             String errorType = errorInfo == null
@@ -298,6 +326,7 @@ final class AgentTraceAssembler {
     private void completeStep(AgentEvent event) {
         MutableSpan span = spans.get(stepSpanId(turnId, event.getStep()));
         if (span != null) {
+            span.output.put("status", AgentSpanStatus.OK.name());
             span.finish(event.getTimestamp(), AgentSpanStatus.OK, null);
         }
     }
@@ -317,14 +346,14 @@ final class AgentTraceAssembler {
         MutableSpan turn = spans.get(spanId("turn", turnId));
         if (turn != null) {
             turn.attributes.put("agent.status", status.name());
+            turn.output.put("status", status.name());
             if (state != null && state.getStopReason() != null) {
                 turn.attributes.put("agent.stop.reason", state.getStopReason());
+                turn.output.put("stopReason", state.getStopReason());
             }
             if (captureContent && state != null
                     && state.getFinalOutput() != null) {
-                turn.attributes.put(
-                    "agent.output", limit(state.getFinalOutput())
-                );
+                turn.output.put("finalOutput", limit(state.getFinalOutput()));
             }
         }
 
@@ -370,6 +399,160 @@ final class AgentTraceAssembler {
         );
     }
 
+    private Map<String, Object> modelInput(ModelRequest request) {
+        Map<String, Object> input = new LinkedHashMap<String, Object>();
+        input.put("messageCount", request.getMessages().size());
+        input.put("availableToolCount", request.getTools().size());
+
+        ModelOptions options = request.getOptions();
+        Map<String, Object> capturedOptions =
+            new LinkedHashMap<String, Object>();
+        if (options.getTemperature() != null) {
+            capturedOptions.put("temperature", options.getTemperature());
+        }
+        if (options.getMaxTokens() != null) {
+            capturedOptions.put("maxTokens", options.getMaxTokens());
+        }
+        if (captureContent && !options.getExtensions().isEmpty()) {
+            capturedOptions.put("extensions", options.getExtensions());
+        }
+        if (!capturedOptions.isEmpty()) {
+            input.put("options", capturedOptions);
+        }
+        if (!captureContent) return input;
+
+        captureMessages(input, request.getMessages());
+        List<Map<String, Object>> tools =
+            new ArrayList<Map<String, Object>>();
+        int toolLimit = Math.min(request.getTools().size(), MAX_CAPTURED_TOOLS);
+        for (int index = 0; index < toolLimit; index++) {
+            tools.add(tool(request.getTools().get(index)));
+        }
+        input.put("tools", tools);
+        if (request.getTools().size() > toolLimit) {
+            input.put("omittedToolCount", request.getTools().size() - toolLimit);
+        }
+        return input;
+    }
+
+    private void captureMessages(Map<String, Object> target,
+                                 List<ChatMessage> messages) {
+        List<Map<String, Object>> captured =
+            new ArrayList<Map<String, Object>>();
+        int messageLimit = Math.min(messages.size(), MAX_CAPTURED_MESSAGES);
+        for (int index = 0; index < messageLimit; index++) {
+            captured.add(message(messages.get(index)));
+        }
+        target.put("messages", captured);
+        if (messages.size() > messageLimit) {
+            target.put("omittedMessageCount", messages.size() - messageLimit);
+        }
+    }
+
+    private Map<String, Object> message(ChatMessage message) {
+        Map<String, Object> captured = new LinkedHashMap<String, Object>();
+        captured.put("role", message.getRole().name().toLowerCase());
+        if (message.getContent() != null) {
+            captured.put("content", limit(message.getContent()));
+        }
+        if (message.getToolCallId() != null) {
+            captured.put("toolCallId", message.getToolCallId());
+        }
+        if (message.getToolName() != null) {
+            captured.put("toolName", message.getToolName());
+        }
+        if (message.isError()) {
+            captured.put("error", true);
+        }
+        if (!message.getToolCalls().isEmpty()) {
+            List<Map<String, Object>> calls =
+                new ArrayList<Map<String, Object>>();
+            int callLimit = Math.min(
+                message.getToolCalls().size(), MAX_CAPTURED_TOOL_CALLS
+            );
+            for (int index = 0; index < callLimit; index++) {
+                calls.add(toolCall(message.getToolCalls().get(index)));
+            }
+            captured.put("toolCalls", calls);
+            if (message.getToolCalls().size() > callLimit) {
+                captured.put(
+                    "omittedToolCallCount",
+                    message.getToolCalls().size() - callLimit
+                );
+            }
+        }
+        return captured;
+    }
+
+    private Map<String, Object> toolCall(ToolCall call) {
+        Map<String, Object> captured = new LinkedHashMap<String, Object>();
+        captured.put("id", call.getId());
+        captured.put("name", call.getName());
+        captured.put("arguments", jsonOrText(call.getArguments()));
+        return captured;
+    }
+
+    private Map<String, Object> tool(ToolDefinition definition) {
+        Map<String, Object> captured = new LinkedHashMap<String, Object>();
+        captured.put("name", definition.getName());
+        captured.put("description", limit(definition.getDescription()));
+        captured.put("inputSchema", jsonOrText(definition.getInputSchema()));
+        if (!definition.getMetadata().isEmpty()) {
+            captured.put("metadata", definition.getMetadata());
+        }
+        return captured;
+    }
+
+    private Map<String, Object> usage(Usage usage) {
+        Map<String, Object> captured = new LinkedHashMap<String, Object>();
+        captured.put("inputTokens", usage.getInputTokens());
+        captured.put("outputTokens", usage.getOutputTokens());
+        captured.put("totalTokens", usage.getTotalTokens());
+        return captured;
+    }
+
+    private Map<String, Object> errorInfo(ToolErrorInfo error) {
+        Map<String, Object> captured = new LinkedHashMap<String, Object>();
+        captured.put("code", error.getCode());
+        captured.put("retryable", error.isRetryable());
+        if (captureContent) {
+            captured.put("message", limit(error.getMessage()));
+            if (error.getRecoveryHint() != null) {
+                captured.put("recoveryHint", limit(error.getRecoveryHint()));
+            }
+            if (!error.getDetails().isEmpty()) {
+                captured.put("details", error.getDetails());
+            }
+        }
+        return captured;
+    }
+
+    private List<Map<String, Object>> outputReferences(
+            List<ToolOutputReference> references) {
+        List<Map<String, Object>> captured =
+            new ArrayList<Map<String, Object>>();
+        for (ToolOutputReference reference : references) {
+            Map<String, Object> value = new LinkedHashMap<String, Object>();
+            value.put("kind", reference.getKind().name());
+            value.put("path", limit(reference.getPath()));
+            if (!reference.getInstruction().isEmpty()) {
+                value.put("instruction", limit(reference.getInstruction()));
+            }
+            captured.add(value);
+        }
+        return captured;
+    }
+
+    private Object jsonOrText(String value) {
+        String limited = limit(value);
+        if (!limited.equals(value)) return limited;
+        try {
+            return CONTENT_MAPPER.readValue(value, Object.class);
+        } catch (Exception ignored) {
+            return limited;
+        }
+    }
+
     private String limit(String value) {
         if (value == null) return "";
         if (value.length() <= maxContentCharacters) return value;
@@ -386,6 +569,10 @@ final class AgentTraceAssembler {
         private Instant startedAt;
         private final long startedNanos = System.nanoTime();
         private final Map<String, Object> attributes =
+            new LinkedHashMap<String, Object>();
+        private final Map<String, Object> input =
+            new LinkedHashMap<String, Object>();
+        private final Map<String, Object> output =
             new LinkedHashMap<String, Object>();
         private Instant endedAt;
         private long durationNanos;
@@ -451,6 +638,8 @@ final class AgentTraceAssembler {
                 startedAt,
                 endedAt == null ? startedAt : endedAt,
                 durationNanos,
+                input,
+                output,
                 attributes,
                 errorType,
                 abbreviate(errorMessage, maxErrorCharacters)
@@ -515,34 +704,6 @@ final class AgentTraceAssembler {
     private static String string(Object value, String fallback) {
         return value instanceof String && !((String) value).trim().isEmpty()
             ? (String) value : fallback;
-    }
-
-    private static String renderMessages(List<ChatMessage> messages) {
-        StringBuilder output = new StringBuilder();
-        for (ChatMessage message : messages) {
-            if (output.length() > 0) output.append('\n');
-            output.append(renderMessage(message));
-        }
-        return output.toString();
-    }
-
-    private static String renderMessage(ChatMessage message) {
-        StringBuilder output = new StringBuilder()
-            .append(message.getRole().name().toLowerCase())
-            .append(':');
-        if (message.getContent() != null) {
-            output.append(message.getContent());
-        }
-        for (ToolCall call : message.getToolCalls()) {
-            output.append("\n[tool_call name=")
-                .append(call.getName())
-                .append(" id=")
-                .append(call.getId())
-                .append(" arguments=")
-                .append(call.getArguments())
-                .append(']');
-        }
-        return output.toString();
     }
 
     private static String abbreviate(String value, int maxCharacters) {

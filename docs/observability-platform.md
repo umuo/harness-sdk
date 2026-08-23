@@ -20,7 +20,8 @@ The first version includes:
 - Chinese and English interfaces with Chinese selected by default and the
   browser choice persisted locally;
 - a Turn detail page with error context, usage, correlation fields,
-  attributes, and a Turn/Step/Model/Tool span waterfall;
+  attributes, a merged Parent/SubAgent call graph, clickable node request and
+  response inspectors, and a Turn/Step/Model/Tool span waterfall;
 - atomic local-file persistence behind a small `TraceStore` interface.
 
 The web project is intentionally outside the Maven reactor. Java 8 remains the
@@ -162,8 +163,8 @@ The local `TraceStore` is deliberately optimized for an MVP:
 
 For production or horizontal scaling, implement the same `TraceStore`
 interface with PostgreSQL, ClickHouse, object storage, or a telemetry backend.
-Keep `schemaVersion` and the HTTP ingestion contract stable so Java Agents do
-not need to change.
+The receiver accepts schema versions 1 and 2. Version 2 adds structured node
+input and output while version 1 remains readable for existing local traces.
 
 Build and run the standalone server with:
 
@@ -179,10 +180,12 @@ MVP; a container or process supervisor should own its lifecycle.
 
 ## Privacy and operational behavior
 
-The SDK does not capture prompts, model answers, Tool arguments, or Tool
-results unless `.captureContent(true)` is explicitly enabled. Trace names,
-errors, metadata, and resource attributes can still be sensitive. Protect the
-data directory, use HTTPS outside localhost, rotate ingestion keys, and apply
+The `AgentObservability.platform(...)` convenience methods capture bounded
+prompts, Model responses, Tool arguments, Tool results, and final answers so
+the node inspector is useful out of the box. Builder-based configurations can
+disable this with `.captureContent(false)`. Trace content, names, errors,
+metadata, and resource attributes can all be sensitive. Protect the data
+directory, use HTTPS outside localhost, rotate ingestion keys, and apply
 retention appropriate to the application.
 
 Platform delivery never blocks the Agent Loop on network I/O. A bounded queue

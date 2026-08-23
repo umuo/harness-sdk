@@ -78,7 +78,9 @@ class LocalFileTraceStore implements TraceStore {
     const status = options.status?.trim().toUpperCase();
     const agentName = options.agentName?.trim().toLowerCase();
     const applicationId = options.applicationId?.trim();
+    const traceId = options.traceId?.trim();
     return traces
+      .filter((trace) => !traceId || trace.traceId === traceId)
       .filter((trace) => !status || trace.status.toUpperCase() === status)
       .filter(
         (trace) =>

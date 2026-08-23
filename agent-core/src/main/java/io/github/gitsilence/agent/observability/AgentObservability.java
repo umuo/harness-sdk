@@ -58,15 +58,18 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
         return builder().logging(logger).build();
     }
 
-    /** Sends traces asynchronously to the platform ingestion endpoint. */
+    /**
+     * Sends traces asynchronously and captures bounded node input/output for
+     * the platform trace debugger. Use the Builder to disable content capture.
+     */
     public static AgentObservability platform(String endpoint) {
-        return builder().platform(
+        return builder().captureContent(true).platform(
             PlatformTraceExporter.builder(endpoint).build()
         ).build();
     }
 
     public static AgentObservability platform(String endpoint, String apiKey) {
-        return builder().platform(
+        return builder().captureContent(true).platform(
             PlatformTraceExporter.builder(endpoint).apiKey(apiKey).build()
         ).build();
     }

@@ -76,6 +76,7 @@ export async function GET(request: NextRequest) {
     limit: Number.isFinite(limit) ? limit : 100,
     status: request.nextUrl.searchParams.get("status") ?? undefined,
     agentName: request.nextUrl.searchParams.get("agent") ?? undefined,
+    traceId: request.nextUrl.searchParams.get("traceId") ?? undefined,
     applicationId:
       request.nextUrl.searchParams.get("applicationId") ?? undefined,
   });

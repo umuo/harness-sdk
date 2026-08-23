@@ -14,7 +14,7 @@ import java.util.Objects;
 /** Stable JSON wire encoding shared by logging and platform exporters. */
 public final class AgentTraceJsonCodec {
 
-    public static final String SCHEMA_VERSION = "1";
+    public static final String SCHEMA_VERSION = "2";
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -68,6 +68,8 @@ public final class AgentTraceJsonCodec {
             encoded.put("startedAt", span.getStartedAt().toString());
             encoded.put("endedAt", span.getEndedAt().toString());
             encoded.put("durationNanos", span.getDurationNanos());
+            encoded.set("input", attributes(span.getInput()));
+            encoded.set("output", attributes(span.getOutput()));
             encoded.set("attributes", attributes(span.getAttributes()));
             encoded.put("errorType", span.getErrorType());
             encoded.put("errorMessage", span.getErrorMessage());
