@@ -1,6 +1,7 @@
 site_name: Agent SDK
 theme:
   name: material
+  language: zh
   features:
     - navigation.tabs
     - navigation.sections
@@ -10,12 +11,12 @@ theme:
       scheme: default
       toggle:
         icon: material/brightness-7
-        name: Switch to dark mode
+        name: 切换到暗色模式
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       toggle:
         icon: material/brightness-4
-        name: Switch to light mode
+        name: 切换到亮色模式
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -33,23 +34,23 @@ plugins:
   - mermaid2
 
 nav:
-  - Home: index.md
-  - Guide:
-    - Architecture: architecture.md
-    - API Guide: api-guide.md
-    - Examples: examples.md
-    - MVP Scope: mvp.md
-  - Capabilities:
-    - Model Providers: model-providers.md
-    - OpenAI Provider: openai-provider.md
-    - Multi-Agent: multi-agent.md
-  - Tools & Extensions:
-    - Tools Authoring: tools.md
-    - Built-in Tools: builtin-tools.md
-    - Tool Results: tool-results.md
-    - Agent Skills: skills.md
-    - MCP Integration: mcp.md
-    - Plugins: plugins.md
-  - Observability:
-    - Concepts: observability.md
-    - Web Platform: observability-platform.md
+  - 首页: index.md
+  - 核心指南:
+    - 架构设计: architecture.md
+    - API 指南: api-guide.md
+    - 示例代码: examples.md
+    - MVP 范围: mvp.md
+  - 核心能力:
+    - 模型提供商: model-providers.md
+    - OpenAI 适配: openai-provider.md
+    - 多 Agent 协作: multi-agent.md
+  - 工具与扩展:
+    - 工具开发: tools.md
+    - 内置工具: builtin-tools.md
+    - 工具执行结果: tool-results.md
+    - Agent 技能: skills.md
+    - MCP 集成: mcp.md
+    - 插件系统: plugins.md
+  - 可观测性:
+    - 核心概念: observability.md
+    - Web 平台: observability-platform.md
