@@ -6,6 +6,7 @@ import type {
   TraceListOptions,
   TraceStore,
 } from "./trace-types";
+import { platformDataDirectory } from "./data-directory";
 import { validateTrace } from "./trace-validation";
 
 const DEFAULT_RETENTION = 5_000;
@@ -16,10 +17,7 @@ class LocalFileTraceStore implements TraceStore {
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor() {
-    const configuredDirectory = process.env.AGENT_OBSERVABILITY_DATA_DIR;
-    this.directory = configuredDirectory
-      ? path.resolve(/* turbopackIgnore: true */ configuredDirectory)
-      : path.join(process.cwd(), ".data");
+    this.directory = platformDataDirectory();
     this.retention = positiveInteger(
       process.env.AGENT_OBSERVABILITY_RETENTION,
       DEFAULT_RETENTION,
@@ -32,12 +30,17 @@ class LocalFileTraceStore implements TraceStore {
     return operation;
   }
 
-  async get(turnId: string): Promise<AgentTrace | null> {
+  async get(turnId: string, applicationId = ""): Promise<AgentTrace | null> {
     if (!turnId || turnId.length > 256) return null;
     try {
-      const content = await fs.readFile(this.fileFor(turnId), "utf8");
+      const content = await fs.readFile(
+        this.fileFor(turnId, applicationId),
+        "utf8",
+      );
       const trace = validateTrace(JSON.parse(content));
-      return trace.turnId === turnId ? trace : null;
+      return trace.turnId === turnId && trace.applicationId === applicationId
+        ? trace
+        : null;
     } catch (error) {
       if (isMissing(error)) return null;
       throw error;
@@ -74,11 +77,16 @@ class LocalFileTraceStore implements TraceStore {
 
     const status = options.status?.trim().toUpperCase();
     const agentName = options.agentName?.trim().toLowerCase();
+    const applicationId = options.applicationId?.trim();
     return traces
       .filter((trace) => !status || trace.status.toUpperCase() === status)
       .filter(
         (trace) =>
           !agentName || trace.agentName.toLowerCase().includes(agentName),
+      )
+      .filter(
+        (trace) =>
+          applicationId === undefined || trace.applicationId === applicationId,
       )
       .sort(
         (left, right) =>
@@ -89,7 +97,7 @@ class LocalFileTraceStore implements TraceStore {
 
   private async persist(trace: AgentTrace): Promise<void> {
     await fs.mkdir(this.directory, { recursive: true });
-    const target = this.fileFor(trace.turnId);
+    const target = this.fileFor(trace.turnId, trace.applicationId);
     const temporary = `${target}.${randomUUID()}.tmp`;
     try {
       await fs.writeFile(temporary, JSON.stringify(trace), {
@@ -122,8 +130,9 @@ class LocalFileTraceStore implements TraceStore {
     );
   }
 
-  private fileFor(turnId: string): string {
-    const name = createHash("sha256").update(turnId).digest("hex");
+  private fileFor(turnId: string, applicationId: string): string {
+    const identity = applicationId ? `${applicationId}:${turnId}` : turnId;
+    const name = createHash("sha256").update(identity).digest("hex");
     return path.join(this.directory, `${name}.json`);
   }
 }

@@ -9,6 +9,7 @@ import {
   percentage,
 } from "../lib/format";
 import { dictionary } from "../lib/i18n";
+import { applicationStore } from "../lib/application-store";
 import { traceStore } from "../lib/trace-store";
 import type { AgentTrace } from "../lib/trace-types";
 
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
 type SearchParameters = Promise<{
   status?: string;
   agent?: string;
+  application?: string;
 }>;
 
 export default async function Dashboard({
@@ -28,7 +30,12 @@ export default async function Dashboard({
   const copy = dictionary(locale);
   const dashboard = copy.dashboard;
   const parameters = await searchParams;
-  const allTraces = await traceStore.list({ limit: 1_000 });
+  const applications = await applicationStore.list();
+  const selectedApplication = parameters.application?.trim() ?? "";
+  const allTraces = await traceStore.list({
+    limit: 1_000,
+    applicationId: selectedApplication || undefined,
+  });
   const status = parameters.status?.trim() ?? "";
   const agent = parameters.agent?.trim() ?? "";
   const traces = filter(allTraces, status, agent);
@@ -85,6 +92,18 @@ export default async function Dashboard({
             <h2>{dashboard.turnsTitle}</h2>
           </div>
           <form className="filters" method="get">
+            <select
+              aria-label={dashboard.filters.applicationLabel}
+              name="application"
+              defaultValue={selectedApplication}
+            >
+              <option value="">{dashboard.filters.allApplications}</option>
+              {applications.map((application) => (
+                <option key={application.id} value={application.id}>
+                  {application.name}
+                </option>
+              ))}
+            </select>
             <input
               aria-label={dashboard.filters.agentLabel}
               name="agent"
@@ -103,7 +122,7 @@ export default async function Dashboard({
               <option value="CANCELLED">{copy.status.CANCELLED}</option>
             </select>
             <button type="submit">{dashboard.filters.apply}</button>
-            {(status || agent) && (
+            {(status || agent || selectedApplication) && (
               <Link href="/">{dashboard.filters.clear}</Link>
             )}
           </form>
@@ -123,6 +142,7 @@ export default async function Dashboard({
               <thead>
                 <tr>
                   <th>{dashboard.table.agent}</th>
+                  <th>{dashboard.table.application}</th>
                   <th>{dashboard.table.status}</th>
                   <th>{dashboard.table.started}</th>
                   <th>{dashboard.table.latency}</th>
@@ -134,7 +154,7 @@ export default async function Dashboard({
               </thead>
               <tbody>
                 {traces.map((trace) => (
-                  <tr key={trace.turnId}>
+                  <tr key={`${trace.applicationId}:${trace.turnId}`}>
                     <td>
                       <div className="agent-cell">
                         <span className="agent-glyph">
@@ -145,6 +165,14 @@ export default async function Dashboard({
                           <small title={trace.turnId}>{shortId(trace.turnId)}</small>
                         </span>
                       </div>
+                    </td>
+                    <td className="muted">
+                      {applicationName(
+                        trace.applicationId,
+                        trace.applicationName,
+                        applications,
+                        dashboard.table.unassigned,
+                      )}
                     </td>
                     <td>
                       <StatusBadge status={trace.status} locale={locale} />
@@ -165,7 +193,10 @@ export default async function Dashboard({
                     </td>
                     <td>{formatNumber(trace.usage.totalTokens, locale)}</td>
                     <td>
-                      <Link className="inspect-link" href={`/traces/${encodeURIComponent(trace.turnId)}`}>
+                      <Link
+                        className="inspect-link"
+                        href={traceDetailHref(trace.turnId, trace.applicationId)}
+                      >
                         {dashboard.table.inspect}
                       </Link>
                     </td>
@@ -252,6 +283,26 @@ function summarize(traces: AgentTrace[]) {
     toolCalls: traces.reduce((sum, trace) => sum + trace.toolCallCount, 0),
     toolErrors: traces.reduce((sum, trace) => sum + trace.toolErrorCount, 0),
   };
+}
+
+function applicationName(
+  applicationId: string,
+  snapshotName: string,
+  applications: Array<{ id: string; name: string }>,
+  unassigned: string,
+): string {
+  if (!applicationId) return unassigned;
+  return (
+    applications.find((application) => application.id === applicationId)
+      ?.name ?? (snapshotName || applicationId)
+  );
+}
+
+function traceDetailHref(turnId: string, applicationId: string): string {
+  const path = `/traces/${encodeURIComponent(turnId)}`;
+  return applicationId
+    ? `${path}?application=${encodeURIComponent(applicationId)}`
+    : path;
 }
 
 function shortId(value: string): string {

@@ -12,9 +12,11 @@ The first version includes:
 - `POST /api/traces` ingestion with schema validation, optional Bearer
   authentication, and a 2 MiB body limit;
 - `GET /api/traces` and `GET /api/traces/{turnId}` query endpoints;
+- application CRUD and one-time API Key generation/rotation under
+  `/api/applications`;
 - `GET /api/health` readiness information;
 - an overview with Turn count, success rate, P95 duration, Tokens, Tool errors,
-  filtering, and manual/automatic refresh;
+  application/status/Agent filtering, and manual/automatic refresh;
 - Chinese and English interfaces with Chinese selected by default and the
   browser choice persisted locally;
 - a Turn detail page with error context, usage, correlation fields,
@@ -32,12 +34,14 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:3000`. Then register platform observability on the Java
-Agent:
+Open `http://localhost:3000/applications`, create an application, and save the
+API Key shown by the platform. The plaintext is displayed only once. Then
+register platform observability on the Java Agent:
 
 ```java
 AgentObservability observability = AgentObservability.platform(
-    "http://localhost:3000/api/traces"
+    "http://localhost:3000/api/traces",
+    System.getenv("AGENT_OBSERVABILITY_API_KEY")
 );
 
 Agent agent = Agent.builder()
@@ -50,43 +54,72 @@ Agent agent = Agent.builder()
 Close `observability` when the application shuts down so its asynchronous
 queue can drain.
 
-## Authentication
+## Applications and ingestion keys
 
-`AGENT_OBSERVABILITY_API_KEY` is not issued by an LLM provider. It is a shared
-Bearer secret generated and owned by the observability platform operator. A
-convenience command creates 32 cryptographically secure random bytes and prints
-them as a 64-character hexadecimal value:
+Each registered application has one independently generated ingestion Key.
+Creating or rotating an application produces an `aoh_...` Bearer secret backed
+by 32 cryptographically secure random bytes. The platform stores only its
+SHA-256 hash and a short display hint; the plaintext cannot be recovered after
+the one-time dialog is closed.
+
+Application lifecycle behavior is deliberately predictable:
+
+- creating the first application disables anonymous Trace ingestion;
+- rotating a Key invalidates the previous Key immediately;
+- deleting an application invalidates its Key immediately;
+- deleting does not cascade into historical Trace deletion;
+- each accepted Trace receives a server-side application ID and name snapshot,
+  so filtering and historical attribution do not depend on mutable SDK input.
+
+The application page supports create, read, edit, delete, and Key rotation.
+Equivalent management endpoints are available for automation:
+
+```text
+GET    /api/applications
+POST   /api/applications
+GET    /api/applications/{id}
+PATCH  /api/applications/{id}
+DELETE /api/applications/{id}
+POST   /api/applications/{id}/rotate-key
+```
+
+The previous `AGENT_OBSERVABILITY_API_KEY` service environment variable remains
+as a legacy global ingestion Key for migration. It does not identify an
+application, so new deployments should prefer generated application Keys.
+
+## Administrator authentication
+
+Application management changes access credentials and must be protected in
+production. Generate an administrator secret:
 
 ```bash
 cd agent-observability-web
 npm run --silent generate-key
-```
 
-OpenSSL can generate an equivalent key:
-
-```bash
+# Equivalent alternative:
 openssl rand -hex 32
 ```
 
-Generate it once, store it in a secret manager or local `.env.local` file, and
-configure the exact same value on the web service and Java process. Do not add
-the value to Git, application logs, or command examples committed to the
-repository.
-
-Web service configuration (`agent-observability-web/.env.local`):
+Configure it only on the web service (`agent-observability-web/.env.local`):
 
 ```dotenv
-AGENT_OBSERVABILITY_API_KEY=the-generated-64-character-value
+AGENT_OBSERVABILITY_ADMIN_KEY=the-generated-administrator-secret
 ```
 
-The included `ObservabilityExample` reads these Java process variables. Normal
-applications may use their own configuration system but must select platform
-mode explicitly:
+The management page then requires an administrator login and stores an
+HTTP-only, SameSite=Strict session token derived from the configured secret.
+The raw administrator Key is not placed in the session cookie. When the
+variable is absent, management is open for local development. Management API
+automation can send the administrator secret directly as an
+`Authorization: Bearer ...` header instead of creating a browser session.
+
+Store each generated application Key in that application's secret manager and
+provide it to its Java process:
 
 ```bash
 export AGENT_OBSERVABILITY_MODE=PLATFORM
 export AGENT_OBSERVABILITY_ENDPOINT="http://localhost:3000/api/traces"
-export AGENT_OBSERVABILITY_API_KEY="the-generated-64-character-value"
+export AGENT_OBSERVABILITY_API_KEY="the-application-key-shown-once"
 ```
 
 ```java
@@ -96,24 +129,26 @@ AgentObservability observability = AgentObservability.platform(
 );
 ```
 
-When the environment variable is absent, ingestion is unauthenticated for
-local development. In production, configure the secret and terminate TLS at a
-reverse proxy or hosting platform. The dashboard and GET APIs have no user
-authentication in this MVP; place the service behind an authenticated gateway
-if traces must not be publicly readable.
+Do not add either administrator or application Keys to Git or logs. Terminate
+TLS at a reverse proxy or hosting platform. Trace dashboard and GET query APIs
+remain readable without an administrator session in this MVP; place the entire
+service behind an authenticated gateway if Trace data must not be public.
 
 ## Configuration
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
-| `AGENT_OBSERVABILITY_API_KEY` | empty | Required Bearer token for ingestion when set |
+| `AGENT_OBSERVABILITY_ADMIN_KEY` | empty | Enables administrator login for application CRUD and Key rotation |
+| `AGENT_OBSERVABILITY_API_KEY` | empty | Legacy global ingestion Key without application attribution |
+| `AGENT_OBSERVABILITY_SECURE_COOKIES` | automatic | Set `true` to force the administrator session cookie to HTTPS-only |
 | `AGENT_OBSERVABILITY_DATA_DIR` | `.data` in the web project | Absolute or relative trace data directory |
 | `AGENT_OBSERVABILITY_RETENTION` | `5000` | Maximum local trace documents retained |
 
-Trace filenames are SHA-256 hashes of Turn IDs, and writes use a temporary file
-plus rename. This avoids using remote identifiers as filesystem paths and
-prevents readers from seeing a partially written document. Files are created
-with owner-only permissions where the operating system honors POSIX modes.
+Trace filenames are SHA-256 hashes of application and Turn IDs. Application
+records store Key hashes, never plaintext Keys. Both stores use a temporary
+file plus rename so readers do not see partially written data. Files are
+created with owner-only permissions where the operating system honors POSIX
+modes.
 
 ## Storage and deployment
 

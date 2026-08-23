@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ingestionIdentity } from "../../../lib/ingestion-auth";
 import { traceStore } from "../../../lib/trace-store";
 import {
   TraceValidationError,
@@ -11,7 +12,8 @@ export const dynamic = "force-dynamic";
 const MAX_BODY_BYTES = 2 * 1_024 * 1_024;
 
 export async function POST(request: NextRequest) {
-  if (!authorized(request)) {
+  const identity = await ingestionIdentity(request);
+  if (!identity.authorized) {
     return NextResponse.json(
       { error: "Unauthorized" },
       { status: 401, headers: { "WWW-Authenticate": "Bearer" } },
@@ -28,10 +30,20 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await readBoundedBody(request);
-    const trace = validateTrace(JSON.parse(body));
+    const trace = {
+      ...validateTrace(JSON.parse(body)),
+      applicationId: identity.applicationId,
+      applicationName: identity.applicationName,
+    };
     await traceStore.save(trace);
     return NextResponse.json(
-      { accepted: true, traceId: trace.traceId, turnId: trace.turnId },
+      {
+        accepted: true,
+        traceId: trace.traceId,
+        turnId: trace.turnId,
+        applicationId: trace.applicationId,
+        applicationName: trace.applicationName,
+      },
       { status: 202 },
     );
   } catch (error) {
@@ -64,15 +76,10 @@ export async function GET(request: NextRequest) {
     limit: Number.isFinite(limit) ? limit : 100,
     status: request.nextUrl.searchParams.get("status") ?? undefined,
     agentName: request.nextUrl.searchParams.get("agent") ?? undefined,
+    applicationId:
+      request.nextUrl.searchParams.get("applicationId") ?? undefined,
   });
   return NextResponse.json({ traces });
-}
-
-function authorized(request: NextRequest): boolean {
-  const expected = process.env.AGENT_OBSERVABILITY_API_KEY;
-  if (!expected) return true;
-  const authorization = request.headers.get("authorization");
-  return authorization === `Bearer ${expected}`;
 }
 
 async function readBoundedBody(request: NextRequest): Promise<string> {

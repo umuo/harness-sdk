@@ -50,6 +50,12 @@ export function validateTrace(input: unknown): AgentTrace {
     errorType: optionalText(value.errorType, "errorType", MAX_TEXT),
     errorMessage: optionalText(value.errorMessage, "errorMessage", MAX_TEXT),
     spans: spansValue.map((span, index) => parseSpan(span, index)),
+    applicationId: optionalText(value.applicationId, "applicationId", 128),
+    applicationName: optionalText(
+      value.applicationName,
+      "applicationName",
+      512,
+    ),
   };
 }
 

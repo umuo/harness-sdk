@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { StatusBadge } from "../../../components/status-badge";
+import { applicationStore } from "../../../lib/application-store";
 import { currentLocale } from "../../../lib/current-locale";
 import {
   formatDateTime,
@@ -20,14 +21,20 @@ export const dynamic = "force-dynamic";
 
 export default async function TraceDetail({
   params,
+  searchParams,
 }: {
   params: Promise<{ turnId: string }>;
+  searchParams: Promise<{ application?: string }>;
 }) {
   const locale = await currentLocale();
   const copy = dictionary(locale).detail;
   const { turnId } = await params;
-  const trace = await traceStore.get(turnId);
+  const applicationId = (await searchParams).application?.trim() ?? "";
+  const trace = await traceStore.get(turnId, applicationId);
   if (!trace) notFound();
+  const application = applicationId
+    ? await applicationStore.get(applicationId)
+    : null;
 
   const total = Math.max(trace.durationNanos, 1);
   const base = Date.parse(trace.startedAt);
@@ -38,7 +45,15 @@ export default async function TraceDetail({
   return (
     <>
       <nav className="breadcrumbs">
-        <Link href="/">{copy.turns}</Link>
+        <Link
+          href={
+            applicationId
+              ? `/?application=${encodeURIComponent(applicationId)}`
+              : "/"
+          }
+        >
+          {copy.turns}
+        </Link>
         <span>/</span>
         <strong>{trace.agentName}</strong>
       </nav>
@@ -96,6 +111,13 @@ export default async function TraceDetail({
             </div>
           </div>
           <MetadataRow label={copy.traceId} value={trace.traceId} />
+          <MetadataRow
+            label={copy.application}
+            value={
+              application?.name ??
+              (trace.applicationName || applicationId || copy.unassignedApplication)
+            }
+          />
           <MetadataRow
             label={copy.parentTurn}
             value={trace.parentTurnId || copy.rootTurn}

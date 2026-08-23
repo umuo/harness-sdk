@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "test": "node --import tsx --test test/**/*.test.ts",
     "generate-key": "node scripts/generate-api-key.mjs"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
     "@types/react-dom": "19.2.2",
     "eslint": "9.39.3",
     "eslint-config-next": "16.3.2",
+    "tsx": "4.23.12",
     "typescript": "5.9.3"
   }
 }

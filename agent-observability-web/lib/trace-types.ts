@@ -42,16 +42,21 @@ export interface AgentTrace {
   errorType: string;
   errorMessage: string;
   spans: TraceSpan[];
+  /** Server-assigned application tenancy; absent on the Java wire payload. */
+  applicationId: string;
+  /** Server-assigned name snapshot retained after an application is deleted. */
+  applicationName: string;
 }
 
 export interface TraceListOptions {
   limit?: number;
   status?: string;
   agentName?: string;
+  applicationId?: string;
 }
 
 export interface TraceStore {
   save(trace: AgentTrace): Promise<void>;
-  get(turnId: string): Promise<AgentTrace | null>;
+  get(turnId: string, applicationId?: string): Promise<AgentTrace | null>;
   list(options?: TraceListOptions): Promise<AgentTrace[]>;
 }

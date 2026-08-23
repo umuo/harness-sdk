@@ -31,6 +31,10 @@ export default async function RootLayout({
               <small>{copy.brandSubtitle}</small>
             </span>
           </Link>
+          <nav className="top-navigation" aria-label={copy.navigation.label}>
+            <Link href="/">{copy.navigation.traces}</Link>
+            <Link href="/applications">{copy.navigation.applications}</Link>
+          </nav>
           <div className="topbar-actions">
             <div className="live-indicator">
               <span /> {copy.ingestionOnline}
