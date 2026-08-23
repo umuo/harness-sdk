@@ -69,7 +69,7 @@ button, input, select { font: inherit; }
 .language-switcher button:hover { color: var(--text); }
 .language-switcher button.active { color: var(--mint); background: rgba(114, 229, 172, 0.12); }
 
-.shell { width: min(1420px, calc(100% - 48px)); margin: 0 auto; padding: 56px 0 80px; }
+.shell { width: min(1420px, calc(100% - 48px)); margin: 0 auto; padding: 28px 0 80px; }
 .hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 34px; }
 .eyebrow { color: var(--mint); font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.17em; text-transform: uppercase; margin: 0 0 11px; }
 h1, h2, h3, p { margin-top: 0; }
@@ -326,7 +326,7 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 
 @media (max-width: 720px) {
-  .shell { width: min(100% - 28px, 1420px); padding-top: 35px; }
+  .shell { width: min(100% - 28px, 1420px); padding-top: 20px; }
   .topbar { padding: 0 16px; }
   .live-indicator { display: none; }
   .top-navigation { margin: 0 8px 0 auto; }
