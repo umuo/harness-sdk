@@ -52,6 +52,31 @@ export interface AgentTrace {
   applicationName: string;
 }
 
+/** One caller-triggered task assembled from a root Turn and its descendants. */
+export interface AgentTask {
+  taskId: string;
+  traceId: string;
+  rootTurnId: string;
+  title: string;
+  rootAgentName: string;
+  agentNames: string[];
+  turnIds: string[];
+  status: string;
+  startedAt: string;
+  endedAt: string;
+  durationNanos: number;
+  stepCount: number;
+  modelCallCount: number;
+  toolCallCount: number;
+  toolErrorCount: number;
+  modelStreamEventCount: number;
+  usage: TraceUsage;
+  errorType: string;
+  errorMessage: string;
+  applicationId: string;
+  applicationName: string;
+}
+
 export interface TraceListOptions {
   limit?: number;
   status?: string;

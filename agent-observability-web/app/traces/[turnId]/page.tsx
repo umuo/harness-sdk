@@ -15,6 +15,7 @@ import {
   statusLabel,
   type Locale,
 } from "../../../lib/i18n";
+import { taskContainingTurn, taskSpans } from "../../../lib/trace-task";
 import { traceStore } from "../../../lib/trace-store";
 import type { TraceAttributes, TraceSpan } from "../../../lib/trace-types";
 
@@ -32,32 +33,34 @@ export default async function TraceDetail({
   const copy = translations.detail;
   const { turnId } = await params;
   const applicationId = (await searchParams).application?.trim() ?? "";
-  const trace = await traceStore.get(turnId, applicationId);
-  if (!trace) notFound();
+  const selectedTrace = await traceStore.get(turnId, applicationId);
+  if (!selectedTrace) notFound();
   const application = applicationId
     ? await applicationStore.get(applicationId)
     : null;
-  const relatedTraces = await traceStore.list({
+  const correlatedTraces = await traceStore.list({
     limit: 1_000,
     applicationId,
-    traceId: trace.traceId,
+    traceId: selectedTrace.traceId,
   });
-  const spansById = new Map(
-    relatedTraces
-      .flatMap((segment) => segment.spans)
-      .map((span) => [span.spanId, span] as const),
+  const tracesByTurn = new Map(
+    correlatedTraces.map((trace) => [trace.turnId, trace] as const),
   );
-  for (const span of trace.spans) spansById.set(span.spanId, span);
-  const spans = [...spansById.values()].sort(
-    (left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt),
+  tracesByTurn.set(selectedTrace.turnId, selectedTrace);
+  const task = taskContainingTurn([...tracesByTurn.values()], turnId);
+  if (!task) notFound();
+  const rootTrace = tracesByTurn.get(task.rootTurnId) ?? selectedTrace;
+  const relatedTraces = [...tracesByTurn.values()].filter((trace) =>
+    task.turnIds.includes(trace.turnId),
   );
+  const spans = taskSpans(task, relatedTraces);
   const base = spans.length
     ? Math.min(...spans.map((span) => Date.parse(span.startedAt)))
-    : Date.parse(trace.startedAt);
+    : Date.parse(task.startedAt);
   const end = spans.length
     ? Math.max(...spans.map((span) => Date.parse(span.endedAt)))
-    : Date.parse(trace.endedAt);
-  const total = Math.max((end - base) * 1_000_000, trace.durationNanos, 1);
+    : Date.parse(task.endedAt);
+  const total = Math.max((end - base) * 1_000_000, task.durationNanos, 1);
 
   return (
     <>
@@ -69,55 +72,55 @@ export default async function TraceDetail({
               : "/"
           }
         >
-          {copy.turns}
+          {copy.tasks}
         </Link>
         <span>/</span>
-        <strong>{trace.agentName}</strong>
+        <strong>{task.title || task.rootAgentName}</strong>
       </nav>
 
       <section className="detail-header">
         <div>
           <div className="detail-title-row">
             <span className="agent-glyph large">
-              {trace.agentName.slice(0, 1).toUpperCase()}
+              {task.rootAgentName.slice(0, 1).toUpperCase()}
             </span>
             <div>
-              <p className="eyebrow">{copy.agentTurn}</p>
-              <h1>{trace.agentName}</h1>
+              <p className="eyebrow">{copy.humanTask}</p>
+              <h1>{task.title || task.rootAgentName}</h1>
             </div>
           </div>
           <div className="identifier-row">
-            <code>{trace.turnId}</code>
-            <StatusBadge status={trace.status} locale={locale} />
+            <code>{task.taskId}</code>
+            <StatusBadge status={task.status} locale={locale} />
           </div>
         </div>
         <div className="detail-duration">
           <span>{copy.totalDuration}</span>
-          <strong>{formatDuration(trace.durationNanos)}</strong>
-          <small>{formatDateTime(trace.startedAt, locale)}</small>
+          <strong>{formatDuration(task.durationNanos)}</strong>
+          <small>{formatDateTime(task.startedAt, locale)}</small>
         </div>
       </section>
 
-      {trace.errorMessage && (
+      {task.errorMessage && (
         <section className="error-banner">
-          <strong>{trace.errorType || copy.turnError}</strong>
-          <p>{trace.errorMessage}</p>
+          <strong>{task.errorType || copy.taskError}</strong>
+          <p>{task.errorMessage}</p>
         </section>
       )}
 
       <section className="detail-grid">
         <article className="panel stat-strip">
-          <DetailStat label={copy.stats.steps} value={trace.stepCount} locale={locale} />
-          <DetailStat label={copy.stats.modelCalls} value={trace.modelCallCount} locale={locale} />
-          <DetailStat label={copy.stats.toolCalls} value={trace.toolCallCount} locale={locale} />
+          <DetailStat label={copy.stats.steps} value={task.stepCount} locale={locale} />
+          <DetailStat label={copy.stats.modelCalls} value={task.modelCallCount} locale={locale} />
+          <DetailStat label={copy.stats.toolCalls} value={task.toolCallCount} locale={locale} />
           <DetailStat
             label={copy.stats.toolErrors}
-            value={trace.toolErrorCount}
+            value={task.toolErrorCount}
             locale={locale}
-            danger={trace.toolErrorCount > 0}
+            danger={task.toolErrorCount > 0}
           />
-          <DetailStat label={copy.stats.inputTokens} value={trace.usage.inputTokens} locale={locale} />
-          <DetailStat label={copy.stats.outputTokens} value={trace.usage.outputTokens} locale={locale} />
+          <DetailStat label={copy.stats.inputTokens} value={task.usage.inputTokens} locale={locale} />
+          <DetailStat label={copy.stats.outputTokens} value={task.usage.outputTokens} locale={locale} />
         </article>
 
         <article className="panel metadata-card">
@@ -127,21 +130,23 @@ export default async function TraceDetail({
               <h2>{copy.traceMetadata}</h2>
             </div>
           </div>
-          <MetadataRow label={copy.traceId} value={trace.traceId} />
+          <MetadataRow label={copy.taskId} value={task.taskId} />
+          <MetadataRow label={copy.traceId} value={task.traceId} />
+          <MetadataRow label={copy.entryAgent} value={task.rootAgentName} />
+          <MetadataRow
+            label={copy.participatingAgents}
+            value={task.agentNames.join(", ")}
+          />
+          <MetadataRow label={copy.agentTurns} value={String(task.turnIds.length)} />
           <MetadataRow
             label={copy.application}
             value={
               application?.name ??
-              (trace.applicationName || applicationId || copy.unassignedApplication)
+              (task.applicationName || applicationId || copy.unassignedApplication)
             }
           />
-          <MetadataRow
-            label={copy.parentTurn}
-            value={trace.parentTurnId || copy.rootTurn}
-          />
-          <MetadataRow label={copy.parentSpan} value={trace.parentSpanId || "—"} />
-          <MetadataRow label={copy.streamEvents} value={String(trace.modelStreamEventCount)} />
-          <Attributes value={trace.attributes} empty={copy.noResourceAttributes} />
+          <MetadataRow label={copy.streamEvents} value={String(task.modelStreamEventCount)} />
+          <Attributes value={rootTrace.attributes} empty={copy.noResourceAttributes} />
         </article>
       </section>
 

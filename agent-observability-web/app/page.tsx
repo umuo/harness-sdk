@@ -10,8 +10,9 @@ import {
 } from "../lib/format";
 import { dictionary } from "../lib/i18n";
 import { applicationStore } from "../lib/application-store";
+import { groupTraceTasks } from "../lib/trace-task";
 import { traceStore } from "../lib/trace-store";
-import type { AgentTrace } from "../lib/trace-types";
+import type { AgentTask } from "../lib/trace-types";
 
 export const dynamic = "force-dynamic";
 
@@ -38,8 +39,9 @@ export default async function Dashboard({
   });
   const status = parameters.status?.trim() ?? "";
   const agent = parameters.agent?.trim() ?? "";
-  const traces = filter(allTraces, status, agent);
-  const metrics = summarize(allTraces);
+  const allTasks = groupTraceTasks(allTraces);
+  const tasks = filter(allTasks, status, agent);
+  const metrics = summarize(allTasks);
   const canDelete = await isCurrentAdmin();
 
   return (
@@ -129,9 +131,9 @@ export default async function Dashboard({
           </form>
         </div>
 
-        {traces.length === 0 ? (
+        {tasks.length === 0 ? (
           <EmptyState
-            hasAny={allTraces.length > 0}
+            hasAny={allTasks.length > 0}
             noMatch={dashboard.empty.noMatch}
             waiting={dashboard.empty.waiting}
             adjust={dashboard.empty.adjust}
@@ -142,7 +144,7 @@ export default async function Dashboard({
             applications={applications}
             canDelete={canDelete}
             copy={dashboard.table}
-            initialTraces={traces}
+            initialTasks={tasks}
             locale={locale}
           />
         )}
@@ -198,29 +200,32 @@ function EmptyState({
   );
 }
 
-function filter(traces: AgentTrace[], status: string, agent: string) {
+function filter(tasks: AgentTask[], status: string, agent: string) {
   const normalizedStatus = status.toUpperCase();
   const normalizedAgent = agent.toLowerCase();
-  return traces.filter(
-    (trace) =>
-      (!normalizedStatus || trace.status.toUpperCase() === normalizedStatus) &&
-      (!normalizedAgent || trace.agentName.toLowerCase().includes(normalizedAgent)),
+  return tasks.filter(
+    (task) =>
+      (!normalizedStatus || task.status.toUpperCase() === normalizedStatus) &&
+      (!normalizedAgent ||
+        task.agentNames.some((name) =>
+          name.toLowerCase().includes(normalizedAgent),
+        )),
   );
 }
 
-function summarize(traces: AgentTrace[]) {
-  const sortedDurations = traces
-    .map((trace) => trace.durationNanos)
+function summarize(tasks: AgentTask[]) {
+  const sortedDurations = tasks
+    .map((task) => task.durationNanos)
     .sort((left, right) => left - right);
-  const completed = traces.filter((trace) => trace.status === "COMPLETED").length;
+  const completed = tasks.filter((task) => task.status === "COMPLETED").length;
   const p95Index = Math.max(0, Math.ceil(sortedDurations.length * 0.95) - 1);
   return {
-    turns: traces.length,
-    successRate: traces.length ? completed / traces.length : 0,
-    failed: traces.length - completed,
+    turns: tasks.length,
+    successRate: tasks.length ? completed / tasks.length : 0,
+    failed: tasks.length - completed,
     p95Nanos: sortedDurations[p95Index] ?? 0,
-    tokens: traces.reduce((sum, trace) => sum + trace.usage.totalTokens, 0),
-    toolCalls: traces.reduce((sum, trace) => sum + trace.toolCallCount, 0),
-    toolErrors: traces.reduce((sum, trace) => sum + trace.toolErrorCount, 0),
+    tokens: tasks.reduce((sum, task) => sum + task.usage.totalTokens, 0),
+    toolCalls: tasks.reduce((sum, task) => sum + task.toolCallCount, 0),
+    toolErrors: tasks.reduce((sum, task) => sum + task.toolErrorCount, 0),
   };
 }

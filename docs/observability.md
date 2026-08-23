@@ -278,8 +278,12 @@ Agent supervisor = Agent.builder()
 
 Parent and child still own separate mutable Agent States. They export separate
 Turn trace segments sharing one trace ID; the child Turn span points to the
-parent Agent-Tool span. The bundled platform merges those segments into one
-clickable call graph while retaining separate Turn records.
+parent Agent-Tool span. The bundled platform treats the root Turn as one
+caller-triggered Task, groups all descendant Turn segments into one dashboard
+row, and merges their spans into one clickable call graph. The underlying
+Turn records remain separate and immutable. Task status and duration use the
+root Turn; counts and Token usage are aggregated across every participating
+Agent Turn.
 
 ## Failure and lifecycle behavior
 

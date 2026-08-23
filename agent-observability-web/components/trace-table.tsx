@@ -5,13 +5,16 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatDuration, formatNumber, formatTimestamp } from "../lib/format";
 import type { Locale } from "../lib/i18n";
-import type { AgentTrace } from "../lib/trace-types";
+import type { AgentTask } from "../lib/trace-types";
 import { StatusBadge } from "./status-badge";
 
 const DELETE_BATCH_SIZE = 500;
 
 interface TraceTableCopy {
-  agent: string;
+  task: string;
+  entryAgent: string;
+  untitled: string;
+  agentSummary: string;
   application: string;
   unassigned: string;
   status: string;
@@ -23,7 +26,7 @@ interface TraceTableCopy {
   error: string;
   inspect: string;
   selectAll: string;
-  selectTrace: string;
+  selectTask: string;
   selected: string;
   delete: string;
   deleteSelected: string;
@@ -39,13 +42,13 @@ interface ApplicationSummary {
 }
 
 export function TraceTable({
-  initialTraces,
+  initialTasks,
   applications,
   locale,
   canDelete,
   copy,
 }: {
-  initialTraces: AgentTrace[];
+  initialTasks: AgentTask[];
   applications: ApplicationSummary[];
   locale: Locale;
   canDelete: boolean;
@@ -57,23 +60,23 @@ export function TraceTable({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
-  const traces = useMemo(
-    () => initialTraces.filter((trace) => !hidden.has(traceKey(trace))),
-    [hidden, initialTraces],
+  const tasks = useMemo(
+    () => initialTasks.filter((task) => !hidden.has(taskKey(task))),
+    [hidden, initialTasks],
   );
 
-  const selectedTraces = useMemo(
-    () => traces.filter((trace) => selected.has(traceKey(trace))),
-    [selected, traces],
+  const selectedTasks = useMemo(
+    () => tasks.filter((task) => selected.has(taskKey(task))),
+    [selected, tasks],
   );
-  const allSelected = traces.length > 0 && selectedTraces.length === traces.length;
+  const allSelected = tasks.length > 0 && selectedTasks.length === tasks.length;
 
   function toggleAll(checked: boolean) {
-    setSelected(checked ? new Set(traces.map(traceKey)) : new Set());
+    setSelected(checked ? new Set(tasks.map(taskKey)) : new Set());
   }
 
-  function toggle(trace: AgentTrace, checked: boolean) {
-    const key = traceKey(trace);
+  function toggle(task: AgentTask, checked: boolean) {
+    const key = taskKey(task);
     setSelected((current) => {
       const next = new Set(current);
       if (checked) next.add(key);
@@ -82,18 +85,13 @@ export function TraceTable({
     });
   }
 
-  async function removeOne(trace: AgentTrace) {
+  async function removeOne(task: AgentTask) {
     if (!window.confirm(copy.deleteConfirm)) return;
-    const key = traceKey(trace);
+    const key = taskKey(task);
     setBusy(key);
     setError("");
     try {
-      const query = trace.applicationId
-        ? `?applicationId=${encodeURIComponent(trace.applicationId)}`
-        : "";
-      await deleteRequest(
-        `/api/traces/${encodeURIComponent(trace.turnId)}${query}`,
-      );
+      await deleteTasks([task]);
       removeLocally([key]);
       router.refresh();
     } catch {
@@ -104,31 +102,21 @@ export function TraceTable({
   }
 
   async function removeSelected() {
-    if (selectedTraces.length === 0) return;
+    if (selectedTasks.length === 0) return;
     const confirmation = copy.deleteSelectedConfirm.replace(
       "{count}",
-      String(selectedTraces.length),
+      String(selectedTasks.length),
     );
     if (!window.confirm(confirmation)) return;
 
     setBusy("batch");
     setError("");
-    const removed: string[] = [];
     try {
-      for (let index = 0; index < selectedTraces.length; index += DELETE_BATCH_SIZE) {
-        const batch = selectedTraces.slice(index, index + DELETE_BATCH_SIZE);
-        await deleteRequest("/api/traces", {
-          traces: batch.map((trace) => ({
-            turnId: trace.turnId,
-            applicationId: trace.applicationId,
-          })),
-        });
-        removed.push(...batch.map(traceKey));
-      }
+      await deleteTasks(selectedTasks);
+      removeLocally(selectedTasks.map(taskKey));
     } catch {
       setError(copy.deleteFailed);
     } finally {
-      removeLocally(removed);
       setBusy("");
       router.refresh();
     }
@@ -147,10 +135,10 @@ export function TraceTable({
     <>
       {canDelete && (
         <div className="trace-selection-bar">
-          <span>{selectedTraces.length} {copy.selected}</span>
+          <span>{selectedTasks.length} {copy.selected}</span>
           <button
             className="danger-action small"
-            disabled={selectedTraces.length === 0 || Boolean(busy)}
+            disabled={selectedTasks.length === 0 || Boolean(busy)}
             onClick={removeSelected}
             type="button"
           >
@@ -174,7 +162,8 @@ export function TraceTable({
                   />
                 </th>
               )}
-              <th>{copy.agent}</th>
+              <th>{copy.task}</th>
+              <th>{copy.entryAgent}</th>
               <th>{copy.application}</th>
               <th>{copy.status}</th>
               <th>{copy.started}</th>
@@ -186,54 +175,64 @@ export function TraceTable({
             </tr>
           </thead>
           <tbody>
-            {traces.map((trace) => {
-              const key = traceKey(trace);
+            {tasks.map((task) => {
+              const key = taskKey(task);
               return (
                 <tr key={key}>
                   {canDelete && (
                     <td className="selection-column">
                       <input
-                        aria-label={`${copy.selectTrace}: ${trace.agentName}`}
+                        aria-label={`${copy.selectTask}: ${task.title || task.rootAgentName}`}
                         checked={selected.has(key)}
                         disabled={Boolean(busy)}
-                        onChange={(event) => toggle(trace, event.target.checked)}
+                        onChange={(event) => toggle(task, event.target.checked)}
                         type="checkbox"
                       />
                     </td>
                   )}
                   <td>
+                    <div className="task-cell">
+                      <strong title={task.title}>{task.title || copy.untitled}</strong>
+                      <small title={task.taskId}>{shortId(task.taskId)}</small>
+                    </div>
+                  </td>
+                  <td>
                     <div className="agent-cell">
                       <span className="agent-glyph">
-                        {trace.agentName.slice(0, 1).toUpperCase()}
+                        {task.rootAgentName.slice(0, 1).toUpperCase()}
                       </span>
                       <span>
-                        <strong>{trace.agentName}</strong>
-                        <small title={trace.turnId}>{shortId(trace.turnId)}</small>
+                        <strong>{task.rootAgentName}</strong>
+                        <small>
+                          {copy.agentSummary
+                            .replace("{agents}", String(task.agentNames.length))
+                            .replace("{turns}", String(task.turnIds.length))}
+                        </small>
                       </span>
                     </div>
                   </td>
                   <td className="muted">
-                    {applicationName(trace, applications, copy.unassigned)}
+                    {applicationName(task, applications, copy.unassigned)}
                   </td>
-                  <td><StatusBadge status={trace.status} locale={locale} /></td>
-                  <td className="muted">{formatTimestamp(trace.startedAt, locale)}</td>
-                  <td>{formatDuration(trace.durationNanos)}</td>
-                  <td>{trace.stepCount}</td>
+                  <td><StatusBadge status={task.status} locale={locale} /></td>
+                  <td className="muted">{formatTimestamp(task.startedAt, locale)}</td>
+                  <td>{formatDuration(task.durationNanos)}</td>
+                  <td>{task.stepCount}</td>
                   <td>
-                    {trace.modelCallCount} <span className="slash">/</span>{" "}
-                    {trace.toolCallCount}
-                    {trace.toolErrorCount > 0 && (
+                    {task.modelCallCount} <span className="slash">/</span>{" "}
+                    {task.toolCallCount}
+                    {task.toolErrorCount > 0 && (
                       <span className="error-count">
-                        {" "}+{trace.toolErrorCount} {copy.error}
+                        {" "}+{task.toolErrorCount} {copy.error}
                       </span>
                     )}
                   </td>
-                  <td>{formatNumber(trace.usage.totalTokens, locale)}</td>
+                  <td>{formatNumber(task.usage.totalTokens, locale)}</td>
                   <td>
                     <div className="trace-row-actions">
                       <Link
                         className="inspect-link"
-                        href={traceDetailHref(trace.turnId, trace.applicationId)}
+                        href={traceDetailHref(task.rootTurnId, task.applicationId)}
                       >
                         {copy.inspect}
                       </Link>
@@ -241,7 +240,7 @@ export function TraceTable({
                         <button
                           className="trace-delete-action"
                           disabled={Boolean(busy)}
-                          onClick={() => removeOne(trace)}
+                          onClick={() => removeOne(task)}
                           type="button"
                         >
                           {busy === key ? copy.deleting : copy.delete}
@@ -259,6 +258,20 @@ export function TraceTable({
   );
 }
 
+async function deleteTasks(tasks: AgentTask[]) {
+  const traces = tasks.flatMap((task) =>
+    task.turnIds.map((turnId) => ({
+      turnId,
+      applicationId: task.applicationId,
+    })),
+  );
+  for (let index = 0; index < traces.length; index += DELETE_BATCH_SIZE) {
+    await deleteRequest("/api/traces", {
+      traces: traces.slice(index, index + DELETE_BATCH_SIZE),
+    });
+  }
+}
+
 async function deleteRequest(path: string, body?: object) {
   const response = await fetch(path, {
     method: "DELETE",
@@ -268,19 +281,19 @@ async function deleteRequest(path: string, body?: object) {
   if (!response.ok) throw new Error(`Trace deletion failed: ${response.status}`);
 }
 
-function traceKey(trace: AgentTrace): string {
-  return `${trace.applicationId}\u0000${trace.turnId}`;
+function taskKey(task: AgentTask): string {
+  return `${task.applicationId}\u0000${task.taskId}`;
 }
 
 function applicationName(
-  trace: AgentTrace,
+  task: AgentTask,
   applications: ApplicationSummary[],
   unassigned: string,
 ): string {
-  if (!trace.applicationId) return unassigned;
+  if (!task.applicationId) return unassigned;
   return (
-    applications.find((application) => application.id === trace.applicationId)
-      ?.name ?? (trace.applicationName || trace.applicationId)
+    applications.find((application) => application.id === task.applicationId)
+      ?.name ?? (task.applicationName || task.applicationId)
   );
 }
 

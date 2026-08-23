@@ -15,15 +15,17 @@ The first version includes:
 - application CRUD and one-time API Key generation/rotation under
   `/api/applications`;
 - `GET /api/health` readiness information;
-- an overview with Turn count, success rate, P95 duration, Tokens, Tool errors,
-  application/status/Agent filtering, and manual/automatic refresh;
+- an overview grouped by caller-triggered Task, with success rate, P95
+  duration, Tokens, Tool errors, application/status/Agent filtering, and
+  manual/automatic refresh;
 - Chinese and English interfaces with Chinese selected by default and the
   browser choice persisted locally;
-- a Turn detail page with error context, usage, correlation fields,
-  attributes, a merged Parent/SubAgent call graph, clickable node request and
-  response inspectors, separate Provider/SDK payload tabs, and a
-  Turn/Step/Model/Tool span waterfall;
-- individual and multi-select Trace deletion from the dashboard;
+- a Task detail page with aggregated usage, all participating Agents,
+  correlation fields, a merged Parent/SubAgent call graph, clickable node
+  request and response inspectors, separate Provider/SDK payload tabs, and a
+  Task/Turn/Step/Model/Tool span waterfall;
+- individual and multi-select Task deletion from the dashboard, including all
+  Turn trace segments belonging to each selected Task;
 - atomic local-file persistence behind a small `TraceStore` interface.
 
 The web project is intentionally outside the Maven reactor. Java 8 remains the
@@ -151,6 +153,19 @@ DELETE /api/traces
 
 The batch request body is `{ "traces": [{ "turnId": "...", "applicationId":
 "..." }] }`.
+
+The dashboard treats one root Turn created by a caller invocation as one
+**Task**. Descendant Agent-as-Tool Turns are attached through `parentTurnId`,
+so a Supervisor and all of its SubAgents appear as one row even though the
+receiver still stores their immutable Turn documents separately. Task-level
+Steps, Model calls, Tool calls, errors, streaming events, and Token usage are
+summed across those documents. Status and wall-clock duration come from the
+root Turn because that is the outcome observed by the human caller.
+
+The original Turn-level query and deletion APIs remain unchanged. When a Task
+is deleted in the dashboard, it expands the Task into its Turn identities and
+uses the existing bounded batch API. This keeps existing integrations and
+stored schema versions compatible.
 
 ## Configuration
 

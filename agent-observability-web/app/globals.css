@@ -108,12 +108,15 @@ h1, h2, h3, p { margin-top: 0; }
 .filters a { color: var(--muted); font-size: 12px; padding: 8px; }
 
 .table-scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; min-width: 980px; }
+table { width: 100%; border-collapse: collapse; min-width: 1120px; }
 th { color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: 0.13em; font-weight: 700; padding: 12px 20px; text-align: left; border-bottom: 1px solid var(--border); }
 td { padding: 15px 20px; border-bottom: 1px solid rgba(176, 218, 198, 0.075); font-size: 12px; }
 tbody tr { transition: background 140ms ease; }
 tbody tr:hover { background: rgba(114, 229, 172, 0.035); }
 tbody tr:last-child td { border-bottom: 0; }
+.task-cell { display: flex; flex-direction: column; gap: 5px; min-width: 210px; max-width: 330px; }
+.task-cell strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.task-cell small { color: var(--faint); font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .agent-cell { display: flex; gap: 10px; align-items: center; min-width: 160px; }
 .agent-cell > span:last-child { display: flex; flex-direction: column; gap: 4px; }
 .agent-cell strong { font-size: 12px; }
@@ -153,6 +156,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .breadcrumbs strong { color: var(--text); }
 .detail-header { display: flex; justify-content: space-between; gap: 30px; align-items: flex-end; margin-bottom: 32px; }
 .detail-title-row { display: flex; gap: 16px; align-items: center; }
+.detail-title-row h1 { max-width: 950px; overflow-wrap: anywhere; }
 .detail-header h1 { font-size: 40px; }
 .identifier-row { display: flex; align-items: center; gap: 11px; margin: 17px 0 0 64px; }
 .identifier-row code { color: var(--muted); font-size: 10px; }

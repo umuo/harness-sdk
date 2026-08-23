@@ -6,9 +6,11 @@ for setup, Java integration, configuration, storage limits, and security.
 The dashboard supports Chinese and English and defaults to Chinese. It also
 provides application CRUD, per-application ingestion Keys, Key rotation, and
 application-scoped Trace filtering. Version 3 traces include a clickable
-Turn/Step/Model/Tool call graph with raw Provider payloads and normalized SDK
-request and response details.
-Administrators can delete one Trace or select and delete records in batches.
+Task/Turn/Step/Model/Tool call graph with raw Provider payloads and normalized
+SDK request and response details. The dashboard groups a root Agent and all
+Agent-as-Tool descendants into one caller-triggered Task while retaining the
+original per-Turn trace documents. Administrators can delete one Task or
+select multiple Tasks; deletion includes every Turn segment in each Task.
 
 Requires Node.js 20.9 or newer.
 
