@@ -17,27 +17,20 @@ public final class OpenAiAgentExample {
     }
 
     public static void main(String[] args) {
-        String apiKey = requireEnvironment("OPENAI_API_KEY");
-        String modelName = requireEnvironment("LLM_MODEL");
-        String baseUrl = requireEnvironment("LLM_BASE_URL");
-        AgentObservability observability = AgentObservability.platform(
-                environment(
-                        "AGENT_OBSERVABILITY_ENDPOINT",
-                        "http://localhost:3000/api/traces"
-                ),
-                environment("AGENT_OBSERVABILITY_API_KEY", "")
-        );
+        OpenAiChatModel model = ExampleSupport.realModel();
+        try (AgentObservability observability =
+                 ExampleSupport.observability("openai-agent")) {
+            run(args, model, observability);
+        }
+    }
 
-        OpenAiChatModel model = OpenAiChatModel.builder()
-            .apiKey(apiKey)
-            .model(modelName)
-            .baseUrl(baseUrl)
-            .build();
-
+    private static void run(String[] args,
+                            OpenAiChatModel model,
+                            AgentObservability observability) {
         Agent mathAgent = Agent.builder()
             .name("math_agent")
-            .description("Solves arithmetic tasks with a calculator")
-            .instructions("Use the calculator and return a concise result.")
+            .description("使用计算器解决算术问题")
+            .instructions("必须使用计算工具完成运算，并用中文返回简洁结果。")
             .model(model)
             .toolsFrom(new ArithmeticTools())
             .maxSteps(5)
@@ -46,10 +39,10 @@ public final class OpenAiAgentExample {
 
         Agent supervisor = Agent.builder()
             .name("supervisor")
-            .description("Delegates specialist tasks and answers the user")
+            .description("把专业任务委托给子 Agent，并整合最终答案")
             .instructions(
-                "Delegate arithmetic to math_agent. "
-                    + "Use todos only when the request has multiple steps."
+                "所有算术任务都委托给 math_agent。"
+                    + "只有多步骤任务才使用 todo 工具。最终答案必须使用中文。"
             )
             .model(model)
             .tool(mathAgent)
@@ -58,40 +51,28 @@ public final class OpenAiAgentExample {
             .maxSteps(10)
             .build();
 
-        String input = args.length == 0
-            ? "What is 17 multiplied by 23?"
-            : String.join(" ", args);
-        AgentResult result = supervisor.run(input);
-        System.out.println(result.getOutput());
-    }
-
-    private static String requireEnvironment(String name) {
-        String value = System.getenv(name);
-        if (value == null || value.trim().isEmpty()) {
-            throw new IllegalStateException("Missing environment variable: " + name);
-        }
-        return value;
+        AgentResult result = supervisor.run(ExampleSupport.task(
+            args,
+            "请计算 17 乘以 23，并说明计算任务由哪个子 Agent 完成。"
+        ));
+        ExampleSupport.printResult(result);
     }
 
     public static final class ArithmeticTools {
 
-        @Tool(name = "multiply", description = "Multiplies two integers")
+        @Tool(name = "multiply", description = "计算两个整数的乘积")
         public long multiply(
-                @ToolParam(name = "a", description = "First integer") long a,
-                @ToolParam(name = "b", description = "Second integer") long b) {
+                @ToolParam(name = "a", description = "第一个整数") long a,
+                @ToolParam(name = "b", description = "第二个整数") long b) {
             return a * b;
         }
 
-        @Tool(name = "add", description = "Adds two integers")
+        @Tool(name = "add", description = "计算两个整数的和")
         public long add(
-                @ToolParam(name = "a", description = "First integer") long a,
-                @ToolParam(name = "b", description = "Second integer") long b) {
+                @ToolParam(name = "a", description = "第一个整数") long a,
+                @ToolParam(name = "b", description = "第二个整数") long b) {
             return a + b;
         }
     }
 
-    private static String environment(String name, String fallback) {
-        String value = System.getenv(name);
-        return value == null ? fallback : value;
-    }
 }

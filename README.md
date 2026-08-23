@@ -41,6 +41,7 @@ mvn clean verify
 - [Tool results, preservation and errors](docs/tool-results.md)
 - [Built-in workspace tools](docs/builtin-tools.md)
 - [Multi-Agent composition](docs/multi-agent.md)
+- [Real LLM examples and integration checks](docs/examples.md)
 - [OpenAI-compatible provider](docs/openai-provider.md)
 - [MVP scope and roadmap](docs/mvp.md)
 

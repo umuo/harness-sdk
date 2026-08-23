@@ -88,8 +88,9 @@ available through `getMode()`:
 
 Observability is opt-in: `AgentBuilder` does not register this Plugin
 automatically. An Agent without `.plugin(observability)` performs no trace
-assembly, metrics collection, logging, or platform transport. The environment
-driven example also defaults `AGENT_OBSERVABILITY_MODE` to `OFF`.
+assembly, metrics collection, logging, or platform transport. The executable
+examples deliberately register platform observability so their real Provider,
+Tool, SubAgent, MCP, Todo, Skill, and streaming behavior can be inspected.
 
 ```java
 // No trace assembly, metrics, logging, or transport work.
