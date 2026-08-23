@@ -38,6 +38,14 @@ parsed arguments, result content, structured errors, metadata, and output-file
 references. This is the logical Agent/Model boundary, not a vendor's raw HTTP
 headers or transport body.
 
+Observability-only summaries never appear inside Model span input or output.
+For example, message count, available Tool count, returned Tool-call count, and
+capture-omission counts use `agent.model.*` span attributes instead. The node
+inspector therefore keeps the provider-neutral `ModelRequest` and
+`ModelResponse` separate from indexed telemetry metadata. Provider adapters
+remain responsible for translating that canonical model into OpenAI,
+Anthropic, or another vendor's exact HTTP schema.
+
 ## Basic usage
 
 ```java

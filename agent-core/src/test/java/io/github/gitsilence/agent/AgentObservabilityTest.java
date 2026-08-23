@@ -101,7 +101,13 @@ class AgentObservabilityTest {
         assertFalse(tool.getInput().containsKey("arguments"));
         assertFalse(tool.getOutput().containsKey("content"));
         assertFalse(firstModel.getInput().containsKey("messages"));
-        assertEquals(1, firstModel.getInput().get("messageCount"));
+        assertFalse(firstModel.getInput().containsKey("messageCount"));
+        assertFalse(firstModel.getInput().containsKey("availableToolCount"));
+        assertFalse(firstModel.getOutput().containsKey("toolCallCount"));
+        assertEquals(1,
+            firstModel.getAttributes().get("agent.model.input.message_count"));
+        assertEquals(1,
+            firstModel.getAttributes().get("agent.model.available_tool_count"));
         assertEquals(false,
             firstModel.getAttributes().get("agent.content.captured"));
 
@@ -136,6 +142,9 @@ class AgentObservabilityTest {
         AgentSpan model = only(
             exporter.getTraces().get(0), AgentSpanKind.MODEL, 0
         );
+        assertFalse(model.getInput().containsKey("messageCount"));
+        assertFalse(model.getInput().containsKey("availableToolCount"));
+        assertFalse(model.getOutput().containsKey("toolCallCount"));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages =
             (List<Map<String, Object>>) model.getInput().get("messages");

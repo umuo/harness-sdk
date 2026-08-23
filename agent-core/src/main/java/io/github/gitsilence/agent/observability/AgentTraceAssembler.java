@@ -174,6 +174,21 @@ final class AgentTraceAssembler {
         span.attributes.put(
             "agent.model.available_tool_count", request.getTools().size()
         );
+        putPositive(
+            span.attributes,
+            "agent.model.input.omitted_message_count",
+            request.getMessages().size() - MAX_CAPTURED_MESSAGES
+        );
+        putPositive(
+            span.attributes,
+            "agent.model.input.omitted_tool_count",
+            request.getTools().size() - MAX_CAPTURED_TOOLS
+        );
+        putPositive(
+            span.attributes,
+            "agent.model.input.omitted_tool_call_count",
+            omittedToolCalls(request.getMessages())
+        );
         span.attributes.put("agent.content.captured", captureContent);
         span.input.putAll(modelInput(request));
         spans.put(id, span);
@@ -202,7 +217,11 @@ final class AgentTraceAssembler {
             "agent.model.output.tool_call_count",
             assistant.getToolCalls().size()
         );
-        span.output.put("toolCallCount", assistant.getToolCalls().size());
+        putPositive(
+            span.attributes,
+            "agent.model.output.omitted_tool_call_count",
+            assistant.getToolCalls().size() - MAX_CAPTURED_TOOL_CALLS
+        );
         if (usage != null) {
             span.output.put("usage", usage(usage));
         }
@@ -401,9 +420,6 @@ final class AgentTraceAssembler {
 
     private Map<String, Object> modelInput(ModelRequest request) {
         Map<String, Object> input = new LinkedHashMap<String, Object>();
-        input.put("messageCount", request.getMessages().size());
-        input.put("availableToolCount", request.getTools().size());
-
         ModelOptions options = request.getOptions();
         Map<String, Object> capturedOptions =
             new LinkedHashMap<String, Object>();
@@ -429,9 +445,6 @@ final class AgentTraceAssembler {
             tools.add(tool(request.getTools().get(index)));
         }
         input.put("tools", tools);
-        if (request.getTools().size() > toolLimit) {
-            input.put("omittedToolCount", request.getTools().size() - toolLimit);
-        }
         return input;
     }
 
@@ -444,9 +457,6 @@ final class AgentTraceAssembler {
             captured.add(message(messages.get(index)));
         }
         target.put("messages", captured);
-        if (messages.size() > messageLimit) {
-            target.put("omittedMessageCount", messages.size() - messageLimit);
-        }
     }
 
     private Map<String, Object> message(ChatMessage message) {
@@ -474,14 +484,25 @@ final class AgentTraceAssembler {
                 calls.add(toolCall(message.getToolCalls().get(index)));
             }
             captured.put("toolCalls", calls);
-            if (message.getToolCalls().size() > callLimit) {
-                captured.put(
-                    "omittedToolCallCount",
-                    message.getToolCalls().size() - callLimit
-                );
-            }
         }
         return captured;
+    }
+
+    private int omittedToolCalls(List<ChatMessage> messages) {
+        int omitted = 0;
+        for (ChatMessage message : messages) {
+            omitted += Math.max(
+                0,
+                message.getToolCalls().size() - MAX_CAPTURED_TOOL_CALLS
+            );
+        }
+        return omitted;
+    }
+
+    private void putPositive(Map<String, Object> target,
+                             String name,
+                             int value) {
+        if (value > 0) target.put(name, value);
     }
 
     private Map<String, Object> toolCall(ToolCall call) {
