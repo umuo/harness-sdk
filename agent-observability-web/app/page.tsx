@@ -46,13 +46,6 @@ export default async function Dashboard({
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16, marginTop: -20 }}>
-        <RefreshControl
-          automaticLabel={copy.refresh.automatic}
-          refreshLabel={copy.refresh.button}
-        />
-      </div>
-
       <section className="metric-grid" aria-label={dashboard.summaryLabel}>
         <Metric
           label={dashboard.metrics.turns}
@@ -89,6 +82,7 @@ export default async function Dashboard({
             <p className="eyebrow">{dashboard.recent}</p>
             <h2>{dashboard.turnsTitle}</h2>
           </div>
+          <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
           <form className="filters" method="get">
             <select
               aria-label={dashboard.filters.applicationLabel}
@@ -124,6 +118,11 @@ export default async function Dashboard({
               <Link href="/">{dashboard.filters.clear}</Link>
             )}
           </form>
+            <RefreshControl
+              automaticLabel={copy.refresh.automatic}
+              refreshLabel={copy.refresh.button}
+            />
+          </div>
         </div>
 
         {tasks.length === 0 ? (
