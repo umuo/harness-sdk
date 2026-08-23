@@ -24,7 +24,7 @@ public final class OpenAiChatModel implements StreamingChatModel {
 
     private OpenAiChatModel(Builder builder) {
         OpenAiCompatibleChatModel.Builder target = OpenAiCompatibleChatModel.builder()
-            .endpoint(builder.endpoint)
+            .baseUrl(builder.baseUrl)
             .model(builder.model)
             .apiKey(builder.apiKey)
             .connectTimeoutMillis(builder.connectTimeoutMillis)
@@ -52,7 +52,7 @@ public final class OpenAiChatModel implements StreamingChatModel {
     }
 
     public static final class Builder {
-        private String endpoint = OpenAiCompatibleChatModel.DEFAULT_ENDPOINT;
+        private String baseUrl = OpenAiCompatibleChatModel.DEFAULT_BASE_URL;
         private String apiKey;
         private String model;
         private int connectTimeoutMillis = 10_000;
@@ -61,8 +61,12 @@ public final class OpenAiChatModel implements StreamingChatModel {
         private final Map<String, String> headers =
             new LinkedHashMap<String, String>();
 
-        public Builder endpoint(String endpoint) {
-            this.endpoint = requireText(endpoint, "endpoint");
+        /**
+         * Sets the API base URL, for example {@code https://api.openai.com/v1}.
+         * The Chat Completions path is appended internally.
+         */
+        public Builder baseUrl(String baseUrl) {
+            this.baseUrl = requireText(baseUrl, "baseUrl");
             return this;
         }
 

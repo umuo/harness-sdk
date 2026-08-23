@@ -31,7 +31,8 @@ import java.util.TreeMap;
  */
 public final class AnthropicChatModel extends AbstractHttpChatModel {
 
-    public static final String DEFAULT_ENDPOINT = "https://api.anthropic.com/v1/messages";
+    public static final String DEFAULT_BASE_URL = "https://api.anthropic.com";
+    private static final String MESSAGES_PATH = "v1/messages";
     public static final String DEFAULT_API_VERSION = "2023-06-01";
 
     private final String model;
@@ -40,7 +41,7 @@ public final class AnthropicChatModel extends AbstractHttpChatModel {
     private AnthropicChatModel(Builder builder) {
         super(
             builder.transport,
-            builder.endpoint,
+            resolveEndpoint(builder.baseUrl, MESSAGES_PATH),
             headers(builder),
             builder.connectTimeoutMillis,
             builder.readTimeoutMillis
@@ -411,7 +412,7 @@ public final class AnthropicChatModel extends AbstractHttpChatModel {
     }
 
     public static final class Builder {
-        private String endpoint = DEFAULT_ENDPOINT;
+        private String baseUrl = DEFAULT_BASE_URL;
         private String apiKey;
         private String apiVersion = DEFAULT_API_VERSION;
         private String model;
@@ -422,8 +423,12 @@ public final class AnthropicChatModel extends AbstractHttpChatModel {
         private final Map<String, String> headers =
             new LinkedHashMap<String, String>();
 
-        public Builder endpoint(String endpoint) {
-            this.endpoint = requireText(endpoint, "endpoint");
+        /**
+         * Sets the Anthropic API host or proxy prefix. The provider appends
+         * {@code /v1/messages} internally.
+         */
+        public Builder baseUrl(String baseUrl) {
+            this.baseUrl = requireText(baseUrl, "baseUrl");
             return this;
         }
 

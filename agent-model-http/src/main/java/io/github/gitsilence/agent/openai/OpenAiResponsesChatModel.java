@@ -31,14 +31,15 @@ import java.util.TreeMap;
  */
 public final class OpenAiResponsesChatModel extends AbstractHttpChatModel {
 
-    public static final String DEFAULT_ENDPOINT = "https://api.openai.com/v1/responses";
+    public static final String DEFAULT_BASE_URL = "https://api.openai.com/v1";
+    private static final String RESPONSES_PATH = "responses";
 
     private final String model;
 
     private OpenAiResponsesChatModel(Builder builder) {
         super(
             builder.transport,
-            builder.endpoint,
+            resolveEndpoint(builder.baseUrl, RESPONSES_PATH),
             headers(builder),
             builder.connectTimeoutMillis,
             builder.readTimeoutMillis
@@ -427,7 +428,7 @@ public final class OpenAiResponsesChatModel extends AbstractHttpChatModel {
     }
 
     public static final class Builder {
-        private String endpoint = DEFAULT_ENDPOINT;
+        private String baseUrl = DEFAULT_BASE_URL;
         private String apiKey;
         private String model;
         private int connectTimeoutMillis = 10_000;
@@ -436,8 +437,12 @@ public final class OpenAiResponsesChatModel extends AbstractHttpChatModel {
         private final Map<String, String> headers =
             new LinkedHashMap<String, String>();
 
-        public Builder endpoint(String endpoint) {
-            this.endpoint = requireText(endpoint, "endpoint");
+        /**
+         * Sets the API base URL through the version prefix. The provider
+         * appends {@code /responses} internally.
+         */
+        public Builder baseUrl(String baseUrl) {
+            this.baseUrl = requireText(baseUrl, "baseUrl");
             return this;
         }
 

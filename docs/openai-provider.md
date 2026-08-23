@@ -15,11 +15,12 @@ StreamingChatModel model = OpenAiCompatibleChatModel.builder()
     .build();
 ```
 
-For a compatible local or third-party endpoint:
+For a compatible local or third-party API, configure the base URL through
+the version prefix. The provider appends `/chat/completions` internally:
 
 ```java
 StreamingChatModel model = OpenAiCompatibleChatModel.builder()
-    .endpoint("http://localhost:8080/v1/chat/completions")
+    .baseUrl("http://localhost:8080/v1")
     .model("local-model")
     .header("X-Custom-Header", "value")
     .build();
@@ -30,11 +31,13 @@ name and now also implements `StreamingChatModel`.
 
 ## OpenAI Responses API
 
-Use the native Responses protocol when the endpoint supports it:
+Use the native Responses protocol when the server supports it. The provider
+appends `/responses` to the configured base URL:
 
 ```java
 StreamingChatModel model = OpenAiResponsesChatModel.builder()
     .apiKey(System.getenv("OPENAI_API_KEY"))
+    .baseUrl("https://api.openai.com/v1")
     .model(System.getenv("LLM_MODEL"))
     .build();
 ```
@@ -51,7 +54,7 @@ are normalized into `ModelStreamEvent` values.
 
 ## Provider-specific options
 
-Both builders support endpoint, API key, connect/read timeout, custom headers
+Both builders support base URL, API key, connect/read timeout, custom headers
 and a custom `HttpTransport`. Additional request fields can be passed through
 `ModelOptions.extension`. Extensions cannot replace protocol-owned fields such
 as `model`, `input`/`messages`, `tools` or `stream`.

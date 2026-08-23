@@ -28,19 +28,19 @@ import java.util.Objects;
 import java.util.TreeMap;
 
 /**
- * Provider for OpenAI-compatible Chat Completions endpoints.
+ * Provider for OpenAI-compatible Chat Completions APIs.
  */
 public final class OpenAiCompatibleChatModel extends AbstractHttpChatModel {
 
-    public static final String DEFAULT_ENDPOINT =
-        "https://api.openai.com/v1/chat/completions";
+    public static final String DEFAULT_BASE_URL = "https://api.openai.com/v1";
+    private static final String CHAT_COMPLETIONS_PATH = "chat/completions";
 
     private final String model;
 
     private OpenAiCompatibleChatModel(Builder builder) {
         super(
             builder.transport,
-            builder.endpoint,
+            resolveEndpoint(builder.baseUrl, CHAT_COMPLETIONS_PATH),
             headers(builder),
             builder.connectTimeoutMillis,
             builder.readTimeoutMillis
@@ -369,7 +369,7 @@ public final class OpenAiCompatibleChatModel extends AbstractHttpChatModel {
     }
 
     public static final class Builder {
-        private String endpoint = DEFAULT_ENDPOINT;
+        private String baseUrl = DEFAULT_BASE_URL;
         private String apiKey;
         private String model;
         private int connectTimeoutMillis = 10_000;
@@ -378,8 +378,12 @@ public final class OpenAiCompatibleChatModel extends AbstractHttpChatModel {
         private final Map<String, String> headers =
             new LinkedHashMap<String, String>();
 
-        public Builder endpoint(String endpoint) {
-            this.endpoint = requireText(endpoint, "endpoint");
+        /**
+         * Sets the API base URL through the version prefix. The provider
+         * appends {@code /chat/completions} internally.
+         */
+        public Builder baseUrl(String baseUrl) {
+            this.baseUrl = requireText(baseUrl, "baseUrl");
             return this;
         }
 

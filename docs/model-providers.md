@@ -60,6 +60,7 @@ exception terminates the stream exceptionally.
 ```java
 StreamingChatModel model = AnthropicChatModel.builder()
     .apiKey(System.getenv("ANTHROPIC_API_KEY"))
+    .baseUrl("https://api.anthropic.com")
     .model(System.getenv("ANTHROPIC_MODEL"))
     .defaultMaxTokens(4096)
     .build();
@@ -72,6 +73,8 @@ consecutive tool results to one user message containing `tool_result` blocks.
 
 The API version defaults to `2023-06-01` and can be changed with
 `.apiVersion(...)`. Beta headers can be supplied with `.header(...)`.
+The provider appends `/v1/messages` to `baseUrl`; callers configure only the
+Anthropic API host or a proxy prefix, not the Messages endpoint itself.
 
 ## Add another HTTP provider
 

@@ -142,6 +142,25 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
         return mapper;
     }
 
+    /**
+     * Appends a provider-owned API path to a caller-supplied base URL.
+     * The base URL may contain a path prefix and may end with a slash.
+     */
+    protected static String resolveEndpoint(String baseUrl, String apiPath) {
+        String normalizedBase = requireText(baseUrl, "baseUrl").trim();
+        String normalizedPath = requireText(apiPath, "apiPath").trim();
+        while (normalizedBase.endsWith("/")) {
+            normalizedBase = normalizedBase.substring(0, normalizedBase.length() - 1);
+        }
+        while (normalizedPath.startsWith("/")) {
+            normalizedPath = normalizedPath.substring(1);
+        }
+        if (normalizedBase.isEmpty() || normalizedPath.isEmpty()) {
+            throw new IllegalArgumentException("baseUrl and apiPath must not be blank");
+        }
+        return normalizedBase + '/' + normalizedPath;
+    }
+
     protected abstract String providerName();
 
     protected abstract JsonNode encodeRequest(ModelRequest request, boolean stream);
