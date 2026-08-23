@@ -46,12 +46,7 @@ export default async function Dashboard({
 
   return (
     <>
-      <section className="hero">
-        <div>
-          <p className="eyebrow">{dashboard.overview}</p>
-          <h1>{dashboard.title}</h1>
-          <p className="hero-copy">{dashboard.description}</p>
-        </div>
+      <section className="hero" style={{ justifyContent: "flex-end" }}>
         <RefreshControl
           automaticLabel={copy.refresh.automatic}
           refreshLabel={copy.refresh.button}
