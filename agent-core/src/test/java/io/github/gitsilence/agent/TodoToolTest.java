@@ -35,7 +35,7 @@ class TodoToolTest {
                         new ToolCall(
                             "todo-call",
                             "todo",
-                            "{\"action\":\"ADD\",\"title\":\"Write tests\"}"
+                            "{\"plan\":[{\"step\":\"Write tests\",\"status\":\"PENDING\"}]}"
                         )
                     ))
                 ));
@@ -47,7 +47,7 @@ class TodoToolTest {
         Agent agent = Agent.builder()
             .name("planner")
             .description("Plans work")
-            .instructions("Use todo for multi-step work.")
+            .instructions("Use todo to manage plan.")
             .model(model)
             .tool(TodoTool.create())
             .build();
@@ -55,7 +55,7 @@ class TodoToolTest {
         AgentResult result = agent.run("plan tests");
 
         assertEquals(1, result.getState().getTodos().size());
-        assertEquals("Write tests", result.getState().getTodos().get(0).getTitle());
+        assertEquals("Write tests", result.getState().getTodos().get(0).getStep());
         assertEquals(TodoStatus.PENDING, result.getState().getTodos().get(0).getStatus());
         assertEquals(1, agent.getToolRegistry().definitions().size());
         assertEquals(
@@ -65,81 +65,43 @@ class TodoToolTest {
     }
 
     @Test
-    void supportsUpdateCompleteListAndClearActions() {
+    void supportsFullPlanReplacement() {
         TodoTool tool = TodoTool.create();
         ToolContext context = context();
 
         tool.execute(ToolArguments.parse(
-            "{\"action\":\"ADD\",\"title\":\"Implement\"}"
+            "{\"plan\":[{\"step\":\"Implement\",\"status\":\"PENDING\"}]}"
         ), context).join();
-        String id = context.todos().list().get(0).getId();
+        assertEquals(1, context.todos().list().size());
+        assertEquals("Implement", context.todos().list().get(0).getStep());
 
         tool.execute(ToolArguments.parse(
-            "{\"action\":\"UPDATE\",\"id\":\"" + id
-                + "\",\"status\":\"IN_PROGRESS\"}"
+            "{\"plan\":[{\"step\":\"Implement\",\"status\":\"IN_PROGRESS\"}]}"
         ), context).join();
+        assertEquals(1, context.todos().list().size());
         assertEquals(TodoStatus.IN_PROGRESS, context.todos().list().get(0).getStatus());
 
         tool.execute(ToolArguments.parse(
-            "{\"action\":\"COMPLETE\",\"id\":\"" + id + "\"}"
+            "{\"plan\":[{\"step\":\"Implement\",\"status\":\"COMPLETED\"},{\"step\":\"Test\",\"status\":\"PENDING\"}]}"
         ), context).join();
+        assertEquals(2, context.todos().list().size());
         assertEquals(TodoStatus.COMPLETED, context.todos().list().get(0).getStatus());
-
-        ToolResult listed = tool.execute(
-            ToolArguments.parse("{\"action\":\"LIST\"}"), context
-        ).join();
-        assertTrue(listed.getContent().contains("\"status\":\"COMPLETED\""));
+        assertEquals(TodoStatus.PENDING, context.todos().list().get(1).getStatus());
 
         ToolResult cleared = tool.execute(
-            ToolArguments.parse("{\"action\":\"CLEAR\"}"), context
+            ToolArguments.parse("{\"plan\":[]}"), context
         ).join();
-        assertTrue(cleared.getContent().contains("\"cleared\":1"));
         assertTrue(context.todos().list().isEmpty());
     }
 
     @Test
-    void schemaDescribesOneActionBasedTool() {
+    void schemaDescribesPlanBasedTool() {
         TodoTool tool = TodoTool.create();
 
         assertEquals("todo", tool.definition().getName());
-        assertTrue(tool.definition().getInputSchema().contains(
-            "\"enum\":[\"LIST\",\"ADD\",\"UPDATE\",\"COMPLETE\",\"CLEAR\"]"
-        ));
-        assertTrue(tool.definition().getInputSchema().contains("\"required\":[\"action\"]"));
-    }
-
-    @Test
-    void reportsUnknownIdsWithActionableStructuredError() {
-        AtomicInteger call = new AtomicInteger();
-        ChatModel model = request -> {
-            if (call.getAndIncrement() == 0) {
-                return CompletableFuture.completedFuture(ModelResponse.of(
-                    ChatMessage.assistant(null, Collections.singletonList(
-                        new ToolCall(
-                            "todo-call",
-                            "todo",
-                            "{\"action\":\"COMPLETE\",\"id\":\"missing\"}"
-                        )
-                    ))
-                ));
-            }
-            return CompletableFuture.completedFuture(
-                ModelResponse.of(ChatMessage.assistant("recovered"))
-            );
-        };
-        Agent agent = Agent.builder()
-            .name("planner")
-            .description("Plans work")
-            .model(model)
-            .tool(TodoTool.create())
-            .build();
-
-        AgentResult result = agent.run("finish the task");
-
-        ToolResult failure = result.getState().getToolResults().get(0).getResult();
-        assertTrue(failure.isError());
-        assertEquals("TODO_NOT_FOUND", failure.getErrorInfo().getCode());
-        assertTrue(failure.getContent().contains("Call todo with action LIST"));
+        assertTrue(tool.definition().getInputSchema().contains("plan"));
+        assertTrue(tool.definition().getInputSchema().contains("step"));
+        assertTrue(tool.definition().getInputSchema().contains("\"enum\":[\"PENDING\",\"IN_PROGRESS\",\"COMPLETED\"]"));
     }
 
     private static ToolContext context() {
