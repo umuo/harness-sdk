@@ -11,3 +11,9 @@ Requires Node.js 20.9 or newer.
 npm ci
 npm run dev
 ```
+
+Generate an ingestion API key with:
+
+```bash
+npm run --silent generate-key
+```

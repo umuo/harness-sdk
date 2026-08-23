@@ -68,6 +68,11 @@ production trace store.
 The SDK makes the observability destination explicit. The selected mode is
 available through `getMode()`:
 
+Observability is opt-in: `AgentBuilder` does not register this Plugin
+automatically. An Agent without `.plugin(observability)` performs no trace
+assembly, metrics collection, logging, or platform transport. The environment
+driven example also defaults `AGENT_OBSERVABILITY_MODE` to `OFF`.
+
 ```java
 // No trace assembly, metrics, logging, or transport work.
 AgentObservability off = AgentObservability.disabled();

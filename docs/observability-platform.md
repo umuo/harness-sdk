@@ -52,11 +52,41 @@ queue can drain.
 
 ## Authentication
 
-Set the same secret on the service and exporter:
+`AGENT_OBSERVABILITY_API_KEY` is not issued by an LLM provider. It is a shared
+Bearer secret generated and owned by the observability platform operator. A
+convenience command creates 32 cryptographically secure random bytes and prints
+them as a 64-character hexadecimal value:
 
 ```bash
-export AGENT_OBSERVABILITY_API_KEY="replace-with-a-long-random-secret"
-npm run dev
+cd agent-observability-web
+npm run --silent generate-key
+```
+
+OpenSSL can generate an equivalent key:
+
+```bash
+openssl rand -hex 32
+```
+
+Generate it once, store it in a secret manager or local `.env.local` file, and
+configure the exact same value on the web service and Java process. Do not add
+the value to Git, application logs, or command examples committed to the
+repository.
+
+Web service configuration (`agent-observability-web/.env.local`):
+
+```dotenv
+AGENT_OBSERVABILITY_API_KEY=the-generated-64-character-value
+```
+
+The included `ObservabilityExample` reads these Java process variables. Normal
+applications may use their own configuration system but must select platform
+mode explicitly:
+
+```bash
+export AGENT_OBSERVABILITY_MODE=PLATFORM
+export AGENT_OBSERVABILITY_ENDPOINT="http://localhost:3000/api/traces"
+export AGENT_OBSERVABILITY_API_KEY="the-generated-64-character-value"
 ```
 
 ```java

@@ -41,7 +41,7 @@ public final class ObservabilityExample {
     }
 
     private static AgentObservability observabilityFromEnvironment() {
-        String mode = environment("AGENT_OBSERVABILITY_MODE", "LOGGING")
+        String mode = environment("AGENT_OBSERVABILITY_MODE", "OFF")
             .trim().toUpperCase();
         switch (mode) {
             case "OFF":
