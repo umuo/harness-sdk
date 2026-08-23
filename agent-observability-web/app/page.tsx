@@ -46,12 +46,12 @@ export default async function Dashboard({
 
   return (
     <>
-      <section className="hero" style={{ justifyContent: "flex-end" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16, marginTop: -20 }}>
         <RefreshControl
           automaticLabel={copy.refresh.automatic}
           refreshLabel={copy.refresh.button}
         />
-      </section>
+      </div>
 
       <section className="metric-grid" aria-label={dashboard.summaryLabel}>
         <Metric
