@@ -10,3 +10,4 @@ target/
 *.tsbuildinfo
 agent-observability-web/.data/
 agent-observability-web/.env*.local
+site/
