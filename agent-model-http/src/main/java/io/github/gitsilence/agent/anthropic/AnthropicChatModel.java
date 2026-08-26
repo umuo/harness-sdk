@@ -26,9 +26,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 
-/**
- * Anthropic Messages API provider with tool use and SSE streaming support.
- */
+/** 支持 Tool Use 和 SSE 流式响应的 Anthropic Messages API 协议适配器。 */
 public final class AnthropicChatModel extends AbstractHttpChatModel {
 
     public static final String DEFAULT_BASE_URL = "https://api.anthropic.com";
@@ -92,6 +90,7 @@ public final class AnthropicChatModel extends AbstractHttpChatModel {
     }
 
     private void encodeMessages(ArrayNode output, List<ChatMessage> messages) {
+        // Anthropic 要求连续 Tool Result 作为同一个 user 消息中的多个内容块发送。
         int index = 0;
         while (index < messages.size()) {
             ChatMessage message = messages.get(index);

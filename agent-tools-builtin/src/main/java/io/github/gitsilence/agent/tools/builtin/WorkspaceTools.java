@@ -11,7 +11,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/** A small, workspace-scoped coding Tool suite. */
+/**
+ * 一组限制在指定工作区内的编码 Tool。
+ *
+ * <p>文件修改默认要求先读取，路径解析会检查符号链接逃逸，Bash 必须显式启用。
+ * 各种大小和数量上限在生产者侧限制数据获取，而不仅依赖最终上下文截断。</p>
+ */
 public final class WorkspaceTools {
 
     private final Path root;
@@ -24,6 +29,7 @@ public final class WorkspaceTools {
 
     private WorkspaceTools(Builder builder) {
         validate(builder);
+        // 所有文件类 Tool 共享同一个路径解析器、读取观察器和路径锁。
         WorkspacePathResolver paths = new WorkspacePathResolver(
             builder.root,
             builder.allowOutsideWorkspace,
@@ -55,6 +61,7 @@ public final class WorkspaceTools {
         Path spill = builder.bashSpillDirectory == null
             ? builder.toolOutputDirectory
             : paths.resolve(builder.bashSpillDirectory.toString());
+        // Bash 默认不加入 tools 列表，调用方必须显式选择扩大执行能力。
         this.bash = builder.bashEnabled
             ? new BashTool(
                 paths,
@@ -82,7 +89,7 @@ public final class WorkspaceTools {
         return builder(Paths.get(root));
     }
 
-    /** Recommended instructions to compose with an Agent using this Tool set. */
+    /** 建议与使用该工具集的 Agent 系统指令合并的操作约束。 */
     public String getInstructions() {
         return "Use read_file instead of shell commands to inspect text files; "
             + "continue large files with offset and limit. Use glob instead "

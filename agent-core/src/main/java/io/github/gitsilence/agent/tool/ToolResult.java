@@ -7,6 +7,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Tool 的不可变返回值。
+ *
+ * <p>{@code content} 会写入模型消息；结构化错误供程序和观测系统使用；输出引用
+ * 指向上下文外的完整内容，供截断后的结果恢复。</p>
+ */
 public final class ToolResult {
 
     private final boolean error;
@@ -67,6 +73,7 @@ public final class ToolResult {
     }
 
     public ToolResult withMetadata(String name, Object value) {
+        // with* 方法始终复制后返回新对象，便于在拦截器链中安全增强结果。
         Map<String, Object> copy = new LinkedHashMap<String, Object>(metadata);
         copy.put(name, value);
         return new ToolResult(error, content, copy, errorInfo, outputReferences);

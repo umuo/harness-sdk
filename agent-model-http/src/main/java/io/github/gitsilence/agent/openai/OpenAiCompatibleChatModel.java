@@ -27,9 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 
-/**
- * Provider for OpenAI-compatible Chat Completions APIs.
- */
+/** OpenAI-compatible Chat Completions API 的协议适配器。 */
 public final class OpenAiCompatibleChatModel extends AbstractHttpChatModel {
 
     public static final String DEFAULT_BASE_URL = "https://api.openai.com/v1";
@@ -59,6 +57,7 @@ public final class OpenAiCompatibleChatModel extends AbstractHttpChatModel {
 
     @Override
     protected ObjectNode encodeRequest(ModelRequest request, boolean stream) {
+        // Core 使用统一消息模型；这里才转换为 function calling 的线上字段。
         Objects.requireNonNull(request, "request");
         ObjectNode root = mapper().createObjectNode();
         root.put("model", model);

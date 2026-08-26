@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/** 模型增量流的句柄：一个最终响应 future 加一个底层传输取消动作。 */
 public final class ModelStream {
 
     private final CompletableFuture<ModelResponse> completion;
@@ -23,6 +24,7 @@ public final class ModelStream {
     }
 
     public boolean cancel() {
+        // CAS 保证底层断流动作最多执行一次。
         if (!cancelled.compareAndSet(false, true)) {
             return false;
         }

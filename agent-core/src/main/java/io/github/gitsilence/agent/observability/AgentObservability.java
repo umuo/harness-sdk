@@ -13,8 +13,10 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.logging.Logger;
 
 /**
- * Builds exporter-neutral traces and process-local metrics from Agent events.
- * One instance may safely be shared by parent and child Agents.
+ * 从 Agent 生命周期事件组装与导出器无关的 Trace 和进程内指标。
+ *
+ * <p>该实现是线程安全的，同一实例可由父子 Agent 共享，以便通过 traceId 关联独立
+ * Turn。它是观察型 Plugin，组装或导出失败都不能改变 Agent 执行结果。</p>
  */
 public final class AgentObservability implements AgentPlugin, AutoCloseable {
 
@@ -44,12 +46,12 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
         return new Builder();
     }
 
-    /** Completely disables trace assembly, metrics, logging, and export. */
+    /** 完全关闭 Trace 组装、指标、日志和导出。 */
     public static AgentObservability disabled() {
         return builder().off().build();
     }
 
-    /** Writes one bounded JSON trace record through java.util.logging. */
+    /** 通过 java.util.logging 为每个结束的 Turn 写一条有界 JSON Trace。 */
     public static AgentObservability logging() {
         return builder().logging().build();
     }
@@ -59,8 +61,8 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
     }
 
     /**
-     * Sends traces asynchronously and captures bounded node input/output for
-     * the platform trace debugger. Use the Builder to disable content capture.
+     * 异步发送 Trace，并为平台调试器捕获有界的节点输入/输出；如需禁用内容捕获，
+     * 请使用 Builder 显式配置。
      */
     public static AgentObservability platform(String endpoint) {
         return builder().captureContent(true).platform(
@@ -89,6 +91,7 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
         Objects.requireNonNull(event, "event");
         if (mode == AgentObservabilityMode.OFF) return;
         if (event.getType() == AgentEventType.TURN_STARTED) {
+            // 每个活动 Turn 独占一个 Assembler；终态事件到达后立即移除。
             AgentTraceAssembler created = new AgentTraceAssembler(
                 event,
                 captureContent,
@@ -115,7 +118,7 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
         try {
             exporter.export(completed);
         } catch (Throwable ignored) {
-            // Observability must never change Agent execution semantics.
+            // 可观测性失败只累计指标，绝不能改变 Agent 执行语义。
             metrics.incrementExporterFailures();
         }
     }
@@ -193,9 +196,8 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
         }
 
         /**
-         * Transfers lifecycle ownership of the platform exporter to the
-         * resulting observability plugin. Closing the plugin drains and closes
-         * the exporter.
+         * 把平台导出器的生命周期所有权交给生成的观测插件；关闭插件时会排空并关闭
+         * 导出器。
          */
         public Builder platform(PlatformTraceExporter exporter) {
             this.exporter = Objects.requireNonNull(exporter, "exporter");
@@ -205,9 +207,8 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
         }
 
         /**
-         * Opts into bounded prompt, response, Tool argument, and Tool result
-         * capture. It is disabled by default because these values may contain
-         * secrets or personal data.
+         * 显式开启有界的提示词、响应、Tool 参数和结果捕获。默认关闭，因为这些内容
+         * 可能包含密钥、个人数据或业务敏感信息。
          */
         public Builder captureContent(boolean captureContent) {
             this.captureContent = captureContent;
@@ -224,7 +225,7 @@ public final class AgentObservability implements AgentPlugin, AutoCloseable {
             return this;
         }
 
-        /** Adds a resource-style attribute to every exported Turn trace. */
+        /** 为每个导出的 Turn Trace 添加资源级属性。 */
         public Builder attribute(String name, Object value) {
             if (name == null || name.trim().isEmpty()) {
                 throw new IllegalArgumentException(

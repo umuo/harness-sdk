@@ -20,6 +20,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
+/**
+ * 一批模型 Tool Call 的执行器。
+ *
+ * <p>它统一处理工具查找、JSON 参数解析、拦截器链、超时、取消、错误策略和最终
+ * 输出限制。并行模式只改变执行时机，不改变返回记录的顺序。</p>
+ */
 public final class ToolExecutor {
 
     private final ToolRegistry registry;
@@ -92,6 +98,7 @@ public final class ToolExecutor {
             Function<ToolCall, ToolInvocation> invocationFactory) {
         final CompletableFuture<List<ToolExecutionRecord>> result =
             new CompletableFuture<List<ToolExecutionRecord>>();
+        // 顺序模式始终只有一个活动 Tool future，取消批次时只需取消它。
         final AtomicReference<CompletableFuture<ToolExecutionRecord>> active =
             new AtomicReference<CompletableFuture<ToolExecutionRecord>>();
         executeSequentialAt(
@@ -191,6 +198,7 @@ public final class ToolExecutor {
                     return;
                 }
                 if (remaining.decrementAndGet() == 0 && !result.isDone()) {
+                    // 不按完成先后收集，而是遍历原始 futures，保证消息历史确定性。
                     List<ToolExecutionRecord> records =
                         new ArrayList<ToolExecutionRecord>(futures.size());
                     for (CompletableFuture<ToolExecutionRecord> completed : futures) {
@@ -221,6 +229,7 @@ public final class ToolExecutor {
             ));
         }
         CancellationGroup cancellations = new CancellationGroup();
+        // 拦截器可以改写 ToolCall；记录同时保留模型原始调用和实际执行调用。
         AtomicReference<ToolCall> executedCall =
             new AtomicReference<ToolCall>(call);
         final CompletableFuture<ToolResult> execution = proceedTool(
@@ -236,6 +245,7 @@ public final class ToolExecutor {
                     result.complete(new ToolExecutionRecord(
                         call,
                         executedCall.get(),
+                        // 结果进入 State 和模型上下文之前必须先执行最终边界策略。
                         applyResultPolicy(toolResult),
                         startedAt,
                         Instant.now()
@@ -278,6 +288,7 @@ public final class ToolExecutor {
             executedCall.set(effective);
             return executeTerminal(effective, context, cancellations);
         }
+        // 与模型拦截器一致，工具拦截器也按注册顺序组成责任链。
         ToolInterceptor interceptor = interceptors.get(index);
         try {
             CompletableFuture<ToolResult> result = interceptor.intercept(
@@ -304,6 +315,7 @@ public final class ToolExecutor {
             ToolCall call,
             ToolContext context,
             CancellationGroup cancellations) {
+        // 直到拦截器全部放行后才查注册表，使拦截器可以安全地重写工具名。
         Optional<Tool> resolved = registry.find(call.getName());
         if (!resolved.isPresent()) {
             return Futures.failed(new ToolFailureException(
@@ -361,6 +373,7 @@ public final class ToolExecutor {
                                  Instant startedAt,
                                  Throwable error) {
         if (errorPolicy == ToolErrorPolicy.FAIL_FAST) {
+            // FAIL_FAST 直接终止整个 Turn；REPORT_TO_MODEL 则生成错误 Tool 消息。
             target.completeExceptionally(error);
             return;
         }
@@ -381,6 +394,7 @@ public final class ToolExecutor {
     }
 
     private ToolResult applyResultPolicy(ToolResult result) {
+        // 默认策略会截取过大输出，并在需要时保存完整内容和恢复引用。
         ToolResult processed = resultPolicy.apply(result);
         if (processed == null) {
             throw new IllegalStateException("ToolResultPolicy returned null");
@@ -396,6 +410,7 @@ public final class ToolExecutor {
             return source;
         }
 
+        // Java 8 没有 CompletableFuture.orTimeout，使用调度任务与源 future 竞争。
         final CompletableFuture<ToolResult> target = new CompletableFuture<ToolResult>();
         long delayMillis = Math.max(1L, timeout.toMillis());
         final ScheduledFuture<?> timer = context.getScheduler().schedule(() -> {
@@ -422,6 +437,7 @@ public final class ToolExecutor {
         return target;
     }
 
+    /** 汇总拦截器和实际 Tool future 的取消动作，处理取消注册之间的竞态。 */
     private static final class CancellationGroup {
         private final List<Runnable> actions = new ArrayList<Runnable>();
         private boolean cancelled;
@@ -458,7 +474,7 @@ public final class ToolExecutor {
             try {
                 action.run();
             } catch (Throwable ignored) {
-                // Cancellation remains best effort for plugin futures.
+                // 插件 future 的取消是尽力而为，不能阻断其他取消动作。
             }
         }
     }

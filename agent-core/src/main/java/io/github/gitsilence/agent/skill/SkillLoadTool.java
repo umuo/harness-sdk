@@ -23,7 +23,12 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Loads registered Skill instructions and referenced text resources on demand. */
+/**
+ * 按需加载已注册 Skill 的正文或文本资源。
+ *
+ * <p>加载目标必须位于 Skill 根目录内、是普通文件、是合法 UTF-8 文本且不超过大小
+ * 上限。该工具只读取内容，不授予 Skill 声明的 {@code allowed-tools} 权限。</p>
+ */
 public final class SkillLoadTool extends AbstractTool<SkillLoadTool.Input> {
 
     public static final int DEFAULT_MAX_BYTES = 512 * 1024;
@@ -57,6 +62,7 @@ public final class SkillLoadTool extends AbstractTool<SkillLoadTool.Input> {
             () -> unknownSkill(input.name)
         );
         String requested = normalizeResource(input.resource);
+        // resource 省略时加载并剥离 SKILL.md frontmatter，只把正文交给模型。
         boolean instructions = requested == null;
         Path target = instructions
             ? skill.getSkillFile()
@@ -105,6 +111,7 @@ public final class SkillLoadTool extends AbstractTool<SkillLoadTool.Input> {
         if (relative.isAbsolute()) {
             throw outsideRoot(skill, resource);
         }
+        // normalize 防止 ../ 词法逃逸；toRealPath 再防止符号链接逃逸。
         Path candidate = skill.getRootDirectory().resolve(relative).normalize();
         if (!candidate.startsWith(skill.getRootDirectory())) {
             throw outsideRoot(skill, resource);
@@ -130,6 +137,7 @@ public final class SkillLoadTool extends AbstractTool<SkillLoadTool.Input> {
     }
 
     private String readText(Path path, String resource, Skill skill) {
+        // 边读边检查大小，避免先把超大资源完整读入堆内存。
         ByteArrayOutputStream output = new ByteArrayOutputStream(
             Math.min(maxBytes, 16 * 1024)
         );
@@ -159,6 +167,7 @@ public final class SkillLoadTool extends AbstractTool<SkillLoadTool.Input> {
             );
         }
         byte[] bytes = output.toByteArray();
+        // NUL 通常说明是二进制资源；随后使用严格解码器验证 UTF-8。
         for (byte value : bytes) {
             if (value == 0) {
                 throw notText(skill, resource, path, null);

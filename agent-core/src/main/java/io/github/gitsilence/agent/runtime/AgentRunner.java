@@ -19,8 +19,15 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Agent 的执行资源所有者和每次 Turn 的状态工厂。
+ *
+ * <p>Runner 持有工作线程池、超时调度器和子 Agent 深度限制；真正的固定循环由
+ * {@link AgentLoop} 完成。默认共享实例使用守护线程，不需要由业务代码关闭。</p>
+ */
 public final class AgentRunner implements AutoCloseable {
 
+    /** 全局共享 Runner 不拥有关闭权，避免某个 Agent 影响其他 Agent。 */
     private static final AgentRunner SHARED = new AgentRunner(
         Executors.newCachedThreadPool(new NamedDaemonThreadFactory("agent-worker")),
         Executors.newSingleThreadScheduledExecutor(
@@ -85,12 +92,14 @@ public final class AgentRunner implements AutoCloseable {
         Objects.requireNonNull(agent, "agent");
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(parentPath, "parentPath");
+        // 同一个 Agent 实例不能在自己的调用路径中再次出现，防止 A -> B -> A。
         if (parentPath.containsAgent(agent.getInstanceId())) {
             return Futures.failed(new IllegalStateException(
                 "Recursive agent delegation detected: " + parentPath
                     + " -> " + agent.descriptor().getName()
             ));
         }
+        // 深度限制同时保护合法但失控的长委托链。
         if (parentPath.depth() >= maxSubAgentDepth) {
             return Futures.failed(new IllegalStateException(
                 "Maximum sub-agent depth exceeded: " + maxSubAgentDepth
@@ -110,6 +119,7 @@ public final class AgentRunner implements AutoCloseable {
                                                        InvocationPath path,
                                                        AgentEventListener listener,
                                                        boolean streamModel) {
+        // 每次根调用和子调用都有独立 turnId；当前版本 runId 是它的兼容别名。
         String runId = UUID.randomUUID().toString();
         List<ChatMessage> messages = new ArrayList<ChatMessage>();
         if (!agent.getInstructions().trim().isEmpty()) {
@@ -118,6 +128,7 @@ public final class AgentRunner implements AutoCloseable {
         messages.addAll(request.getInitialMessages());
         messages.add(ChatMessage.user(request.getInput()));
 
+        // 统一写入 SDK 运行字段；traceId 允许调用方预先提供，用于接入外部追踪。
         Map<String, Object> metadata =
             new LinkedHashMap<String, Object>(request.getMetadata());
         metadata.put("runId", runId);
@@ -126,6 +137,7 @@ public final class AgentRunner implements AutoCloseable {
         metadata.put("agentName", agent.descriptor().getName());
         metadata.put("invocationPath", path.getAgentNames());
 
+        // 请求只负责播种初始数据；后续所有变化都限定在这个新状态中。
         AgentState state = new AgentState(
             runId,
             agent.descriptor().getName(),
@@ -157,6 +169,7 @@ public final class AgentRunner implements AutoCloseable {
 
     @Override
     public void close() {
+        // 只关闭 Builder 自动创建、由当前 Runner 拥有的线程池。
         if (closeExecutor) {
             executor.shutdownNow();
         }
@@ -189,6 +202,7 @@ public final class AgentRunner implements AutoCloseable {
         }
 
         public AgentRunner build() {
+            // 调用方注入线程池时，其生命周期仍由调用方负责。
             boolean ownsExecutor = executor == null;
             boolean ownsScheduler = scheduler == null;
             ExecutorService actualExecutor = executor == null

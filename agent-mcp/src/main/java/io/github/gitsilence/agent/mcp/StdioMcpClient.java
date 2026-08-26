@@ -39,8 +39,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Java 8 MCP client using the newline-delimited stdio transport. The process is
- * started lazily by {@link #initialize()}.
+ * 使用换行分隔 stdio 传输的 Java 8 MCP 客户端。
+ *
+ * <p>子进程在 {@link #initialize()} 时延迟启动。客户端负责 JSON-RPC 请求关联、
+ * 超时与取消、工具分页发现、多轮 input_required，以及现代无状态协议到传统有状态
+ * 协议的自动回退。</p>
  */
 public final class StdioMcpClient implements McpClient {
 
@@ -71,10 +74,12 @@ public final class StdioMcpClient implements McpClient {
     private final ObjectNode clientCapabilities;
     private final McpInputHandler inputHandler;
     private final int maxInputRounds;
+    /** JSON-RPC id 生成器和等待响应的请求表共同完成异步请求关联。 */
     private final AtomicLong requestIds = new AtomicLong();
     private final ConcurrentMap<String, PendingRequest> pending =
         new ConcurrentHashMap<String, PendingRequest>();
     private final ScheduledExecutorService scheduler;
+    /** 生命周期、stdin 写入和 stderr 尾部各自使用独立锁，避免无关操作互相阻塞。 */
     private final Object lifecycleLock = new Object();
     private final Object writeLock = new Object();
     private final Object stderrLock = new Object();
@@ -124,6 +129,7 @@ public final class StdioMcpClient implements McpClient {
     @Override
     public CompletableFuture<McpInitializeResult> initialize() {
         synchronized (lifecycleLock) {
+            // 初始化 future 被缓存，多个并发调用方共享同一次协商。
             if (initializeFuture != null) {
                 return initializeFuture;
             }
@@ -159,6 +165,7 @@ public final class StdioMcpClient implements McpClient {
 
     private void discoverStateless(
             final CompletableFuture<McpInitializeResult> output) {
+        // 先探测 2026 无状态协议；AUTO 模式下仅在“服务端不认识该协议”时回退。
         ObjectNode params = mapper.createObjectNode();
         attachRequestMeta(params, LATEST_PROTOCOL_VERSION);
         request("server/discover", params, false).whenComplete((node, error) -> {
@@ -176,9 +183,8 @@ public final class StdioMcpClient implements McpClient {
                 initializeResult = discovered;
                 output.complete(discovered);
             } catch (RuntimeException parseError) {
-                // A valid JSON-RPC result proves this is a modern server. A
-                // malformed or unsupported modern result must not be retried
-                // as the stateful legacy protocol on the same configuration.
+                // 收到合法 JSON-RPC result 已证明它是现代服务端；现代响应内容错误时
+                // 不能再用相同配置重试传统有状态协议，否则会掩盖真正的协议错误。
                 failPreparation(output, parseError);
             }
         });
@@ -187,6 +193,7 @@ public final class StdioMcpClient implements McpClient {
     private void fallbackToLegacy(
             CompletableFuture<McpInitializeResult> output) {
         try {
+            // 传统协议包含进程级会话状态，因此必须重启探测用的子进程再初始化。
             restartProcess();
             initializeLegacy(output);
         } catch (Throwable error) {
@@ -291,6 +298,7 @@ public final class StdioMcpClient implements McpClient {
 
         final CompletableFuture<McpCallToolResult> output =
             new CompletableFuture<McpCallToolResult>();
+        // 一轮 Tool 调用可能在 MCP 请求和本地 inputHandler future 之间切换。
         final AtomicReference<CompletableFuture<?>> activeOperation =
             new AtomicReference<CompletableFuture<?>>();
         initialize().whenComplete((initialized, initializeError) -> {
@@ -376,6 +384,7 @@ public final class StdioMcpClient implements McpClient {
                 ));
                 return;
             }
+            // 服务端需要补充输入时交给宿主回调，随后带 requestState 发起下一轮。
             resolveInputRequired(
                 toolName, arguments, round, result, output, activeOperation
             );
@@ -496,6 +505,7 @@ public final class StdioMcpClient implements McpClient {
             final List<McpToolDefinition> tools,
             final Set<String> names,
             final CatalogAccumulator catalog) {
+        // 页数和工具总数双重上限用于防御错误或恶意的无限分页服务端。
         if (page >= maxToolPages) {
             return Futures.failed(new McpClientException(
                 "MCP_TOOL_LIST_LIMIT",
@@ -924,6 +934,7 @@ public final class StdioMcpClient implements McpClient {
                 "MCP_CLIENT_CLOSED", "MCP client is closed", false
             ));
         }
+        // 先登记 pending，再写入 stdio，避免极快响应先于关联表注册到达。
         final long numericId = requestIds.incrementAndGet();
         final String id = Long.toString(numericId);
         final PendingRequest request = new PendingRequest(method);
@@ -968,9 +979,8 @@ public final class StdioMcpClient implements McpClient {
     }
 
     private boolean shouldSendCancellation(String method) {
-        // AUTO discovery failure synchronously restarts the child process for
-        // legacy negotiation. Avoid racing a cancellation for the old probe
-        // into the replacement process.
+        // AUTO 探测失败会同步重启子进程协商传统协议；不能让旧探测请求的取消通知
+        // 与替换后的新进程发生竞态。
         return !"initialize".equals(method)
             && !(protocolMode == McpProtocolMode.AUTO
                 && "server/discover".equals(method));
@@ -1056,7 +1066,7 @@ public final class StdioMcpClient implements McpClient {
             try {
                 targetWriter.close();
             } catch (IOException ignored) {
-                // Process termination below is the fallback.
+                // 关闭 stdin 失败时，下面的进程终止逻辑仍会兜底。
             }
         }
         if (target == null) return;

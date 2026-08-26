@@ -7,8 +7,10 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Bounds the text inserted into model history while retaining both the start
- * and end, where summaries and final diagnostics commonly appear.
+ * 限制写入模型历史的 Tool 文本，同时保留开头和结尾。
+ *
+ * <p>开头通常包含上下文，结尾通常包含摘要或错误诊断。发生截断前会先确认完整
+ * 输出已有可恢复引用；没有引用时将精确内容保存到临时文件。</p>
  */
 public final class BoundedToolResultPolicy implements ToolResultPolicy {
 
@@ -59,12 +61,14 @@ public final class BoundedToolResultPolicy implements ToolResultPolicy {
             return result;
         }
 
+        // 先保存、再截断，保证任何被模型省略的字节都可以恢复。
         ToolResult preserved = preserve(result, content);
         String marker = "\n\n[tool output truncated: "
             + originalBytes + "B/" + originalLines + " lines; "
             + references(preserved.getOutputReferences()) + "]\n\n";
         int contentBudget = Math.max(0, maxBytes - utf8Bytes(marker));
         TextParts lineParts = selectLines(content, maxLines - 3);
+        // 字节和行数都按首尾大致均分；UTF-8 截取不会切断代理对或多字节字符。
         int headBudget = (contentBudget + 1) / 2;
         int tailBudget = contentBudget / 2;
         String head = utf8Prefix(lineParts.head, headBudget);
@@ -85,6 +89,7 @@ public final class BoundedToolResultPolicy implements ToolResultPolicy {
 
     private ToolResult preserve(ToolResult result, String content) {
         if (!result.getOutputReferences().isEmpty()) {
+            // 生产者已保存完整输出时复用引用，避免形成临时文件复制链。
             return result.withMetadata("toolOutputPreservation", "existing_reference");
         }
         final Path path;

@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Objects;
 
+/** 把模型提供的路径解析为受工作区边界约束的规范绝对路径。 */
 final class WorkspacePathResolver {
 
     private final Path root;
@@ -58,6 +59,8 @@ final class WorkspacePathResolver {
             ? supplied.toAbsolutePath().normalize()
             : root.resolve(supplied).normalize();
         try {
+            // 对尚不存在的目标向上寻找现存祖先，再解析其真实路径；这样写入新文件时
+            // 也能检测祖先目录中的符号链接是否跳出了工作区。
             Path existing = candidate;
             while (existing != null
                     && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
@@ -93,6 +96,7 @@ final class WorkspacePathResolver {
     }
 
     private boolean isReadableOutput(Path path) throws IOException {
+        // Tool 输出目录只额外授予 read_file 读取权，不授予编辑或 Bash 工作目录权限。
         if (readableOutputRoot == null) {
             return false;
         }

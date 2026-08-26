@@ -10,6 +10,12 @@ import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 
+/**
+ * Tool 执行时可访问的受控运行上下文。
+ *
+ * <p>它提供当前 Turn 的变量、Todo、执行器和调度器，但不直接暴露消息列表，避免
+ * Tool 绕过 AgentLoop 修改模型历史。上下文对象的生命周期仅限本次 Tool Call。</p>
+ */
 public final class ToolContext {
 
     private final String toolCallId;
@@ -48,6 +54,7 @@ public final class ToolContext {
     }
 
     public Map<String, Object> getMetadata() {
+        // AgentState 返回副本；Tool 修改该 Map 不会污染真实元数据。
         return state.metadataSnapshot();
     }
 

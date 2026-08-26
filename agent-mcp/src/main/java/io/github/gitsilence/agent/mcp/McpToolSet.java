@@ -12,8 +12,10 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * A discovered snapshot of one MCP server's Tools. Closing the set closes its
- * client by default; an Agent may keep using the Tools only while it remains open.
+ * 单个 MCP 服务端的一次 Tool 发现快照。
+ *
+ * <p>远程 Tool 在此统一适配为 Core 的本地 Tool 契约，因此已有的超时、拦截器、
+ * 错误策略和输出限制都会继续生效。默认关闭 ToolSet 时也关闭其客户端。</p>
  */
 public final class McpToolSet implements AutoCloseable {
 
@@ -46,6 +48,7 @@ public final class McpToolSet implements AutoCloseable {
                     false
                 );
             }
+            // namespace 将远程名称转换为合法且抗冲突的本地 Tool 名称。
             Tool tool = new McpToolAdapter(
                 client, initializeResult, definition, namespace, outputStore
             );
@@ -78,6 +81,7 @@ public final class McpToolSet implements AutoCloseable {
         Objects.requireNonNull(client, "client");
         Objects.requireNonNull(outputStore, "outputStore");
         McpToolNames.validateNamespace(namespace);
+        // 初始化和分页发现完成后才发布不可变快照，避免 Agent 看到半成品注册表。
         CompletableFuture<McpToolSet> discovered = client.initialize()
             .thenCompose(initialized -> client.listToolCatalog()
                 .thenApply(catalog -> new McpToolSet(

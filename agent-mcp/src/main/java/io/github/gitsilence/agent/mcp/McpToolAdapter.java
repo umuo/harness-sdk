@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
+/** 将一个远程 MCP Tool 映射为 Agent Core 的本地 Tool。 */
 final class McpToolAdapter implements Tool {
 
     private final McpClient client;
@@ -109,6 +110,7 @@ final class McpToolAdapter implements Tool {
             );
 
         if (remoteResult.isOmittedFromModelContent()) {
+            // 二进制或未知 MCP 内容无法安全放进模型文本，保存原始 JSON 以便恢复。
             Path path = outputStore.writeUtf8(
                 "mcp-" + definition.getName() + "-",
                 remoteResult.getRawResultJson()

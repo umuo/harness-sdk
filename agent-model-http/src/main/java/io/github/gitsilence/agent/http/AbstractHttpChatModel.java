@@ -18,6 +18,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * HTTP 模型 Provider 的公共执行骨架。
+ *
+ * <p>子类只负责请求编码、完整响应解码和 SSE 事件解码；本类统一处理 HTTP 调用、
+ * 取消、错误包装以及可选的 Provider 原始交换捕获。这样新增 Provider 不需要修改
+ * Agent Core。</p>
+ */
 public abstract class AbstractHttpChatModel implements StreamingChatModel {
 
     private static final int MAX_EXCHANGE_RESPONSE_CHARACTERS = 2 * 1024 * 1024;
@@ -46,6 +53,7 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
 
     @Override
     public CompletableFuture<ModelResponse> generate(ModelRequest request) {
+        // 原始 Provider 正文只在观测插件明确请求时保留，默认避免敏感信息驻留。
         final boolean captureExchange =
             request.isModelExchangeCaptureEnabled();
         final HttpRequestData httpRequest;
@@ -79,6 +87,7 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
             ));
         }
 
+        // 单独创建结果 future，便于把取消继续传给 transport future。
         final CompletableFuture<ModelResponse> result =
             new CompletableFuture<ModelResponse>();
         httpResponse.whenComplete((response, error) -> {
@@ -191,6 +200,7 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
         }
         final CompletableFuture<ModelResponse> completion =
             new CompletableFuture<ModelResponse>();
+        // 只有启用交换捕获时才实际追加；缓存本身仍有 2 MiB 硬上限。
         final BoundedSseCapture responseCapture = new BoundedSseCapture(
             MAX_EXCHANGE_RESPONSE_CHARACTERS
         );
@@ -237,6 +247,7 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
                 return;
             }
             try {
+                // SSE 增量最终汇聚为标准 ModelResponse，供固定 AgentLoop 继续执行。
                 ModelResponse decoded = decoder.finish();
                 ModelResponse response;
                 if (captureExchange) {
@@ -276,8 +287,8 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
     }
 
     /**
-     * Appends a provider-owned API path to a caller-supplied base URL.
-     * The base URL may contain a path prefix and may end with a slash.
+     * 将 Provider 自己的 API 路径追加到调用方提供的 base URL。
+     * base URL 可以带路径前缀，也可以以斜杠结尾。
      */
     protected static String resolveEndpoint(String baseUrl, String apiPath) {
         String normalizedBase = requireText(baseUrl, "baseUrl").trim();
@@ -294,12 +305,16 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
         return normalizedBase + '/' + normalizedPath;
     }
 
+    /** 用于异常和观测记录的人类可读 Provider 名称。 */
     protected abstract String providerName();
 
+    /** 把标准 ModelRequest 编码为 Provider 请求 JSON。 */
     protected abstract JsonNode encodeRequest(ModelRequest request, boolean stream);
 
+    /** 把 Provider 完整响应 JSON 解码为标准 ModelResponse。 */
     protected abstract ModelResponse decodeResponse(JsonNode response);
 
+    /** 创建一次流式请求专用的有状态 SSE 解码器。 */
     protected abstract ModelStreamDecoder newStreamDecoder(ModelStreamListener listener);
 
     private HttpRequestData request(ModelRequest request, boolean stream) {
@@ -403,7 +418,7 @@ public abstract class AbstractHttpChatModel implements StreamingChatModel {
         try {
             listener.onError(error);
         } catch (Throwable ignored) {
-            // Listener failures must not replace the transport or decoder failure.
+            // 监听器异常不能覆盖更有诊断价值的传输或解码异常。
         }
     }
 

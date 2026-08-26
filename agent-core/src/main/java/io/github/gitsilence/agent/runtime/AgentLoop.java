@@ -27,6 +27,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * 单个 Turn 的固定状态机：模型调用 -> 可选工具批次 -> 下一次模型调用。
+ *
+ * <p>该类故意保持包内可见，避免把内部阶段暴露成公共工作流 DSL。一个 Loop 只服务
+ * 一个 {@link AgentState}，不会被其他 Turn 复用。</p>
+ */
 final class AgentLoop {
 
     private final Agent agent;
@@ -36,7 +42,9 @@ final class AgentLoop {
     private final ToolExecutor toolExecutor;
     private final AgentEventListener listener;
     private final boolean streamModel;
+    /** 事件序号只要求在当前 Turn 内严格递增。 */
     private final AtomicLong eventSequence = new AtomicLong();
+    /** 指向当前模型调用或工具批次的取消动作，供外层 future 统一传播取消。 */
     private final AtomicReference<Runnable> activeCancellation =
         new AtomicReference<Runnable>();
     private final AtomicBoolean cancelled = new AtomicBoolean();
@@ -78,6 +86,7 @@ final class AgentLoop {
             return fail(error);
         }
 
+        // 对外 future 与内部递归 workflow 分离，以便包装异常并接管取消语义。
         CompletableFuture<AgentResult> result = new CompletableFuture<AgentResult>();
         workflow.whenComplete((value, error) -> {
             if (result.isCancelled()) {
@@ -111,11 +120,13 @@ final class AgentLoop {
     }
 
     private CompletableFuture<AgentResult> iterate() {
+        // 终止条件在每次模型调用前检查，因此也能基于上一批工具结果停止。
         Optional<AgentResult> terminated = evaluateTermination();
         if (terminated.isPresent()) {
             return CompletableFuture.completedFuture(terminated.get());
         }
         if (state.getStep() >= agent.getMaxSteps()) {
+            // 达到上限是可预期的 STOPPED 结果，不视为异常失败。
             state.stop("MAX_STEPS_REACHED");
             return CompletableFuture.completedFuture(new AgentResult(state.snapshot()));
         }
@@ -126,6 +137,7 @@ final class AgentLoop {
             state.getRunId(), agent.descriptor().getName(), state.getStep(),
             null, null
         ));
+        // 每次都使用状态快照构造请求，Provider 只负责协议转换，不执行 Tool。
         ModelRequest request = new ModelRequest(
             state.messagesSnapshot(),
             new ArrayList<>(agent.getToolRegistry().definitions()),
@@ -151,6 +163,7 @@ final class AgentLoop {
             ));
 
             if (assistant.getToolCalls().isEmpty()) {
+                // 没有 Tool Call 即表示模型给出了最终答案，本 Turn 正常完成。
                 if (assistant.getContent() == null) {
                     return Futures.failed(new IllegalStateException(
                         "Final assistant message has null content"
@@ -169,6 +182,7 @@ final class AgentLoop {
                     state.getStep(), call
                 ));
             }
+            // 同一响应里的 Tool Call 作为一个批次执行；执行模式由 Agent 配置决定。
             CompletableFuture<List<ToolExecutionRecord>> tools = toolExecutor.executeAll(
                 assistant.getToolCalls(),
                 call -> new ToolContext(call.getId(), state, runner, path),
@@ -196,6 +210,7 @@ final class AgentLoop {
     }
 
     private void appendToolResults(List<ToolExecutionRecord> records) {
+        // 即使工具并行完成，ToolExecutor 也会按模型原始调用顺序返回记录。
         for (ToolExecutionRecord record : records) {
             state.appendToolExecution(record);
             state.appendMessage(ChatMessage.tool(
@@ -220,6 +235,8 @@ final class AgentLoop {
             state.snapshot(),
             streamModel && agent.getModel() instanceof StreamingChatModel
         );
+        // 一个模型调用可能经过多个拦截器并最终产生 Provider future/stream；
+        // 取消组把这些异步层统一收拢，避免只取消最外层 future。
         CancellationGroup cancellations = new CancellationGroup();
         Runnable cancellation = cancellations::cancel;
         activate(cancellation);
@@ -246,6 +263,7 @@ final class AgentLoop {
         if (index >= agent.getModelInterceptors().size()) {
             return invokeModelTerminal(invocation, cancellations);
         }
+        // 拦截器按插件注册顺序组成责任链，可包装、改写或短路模型调用。
         ModelInterceptor interceptor = agent.getModelInterceptors().get(index);
         try {
             CompletableFuture<ModelResponse> result = interceptor.intercept(
@@ -270,6 +288,7 @@ final class AgentLoop {
             CancellationGroup cancellations) {
         try {
             if (invocation.isStreaming()) {
+                // 流事件用于实时展示；最终仍汇聚为与非流式相同的 ModelResponse。
                 StreamingChatModel streaming = (StreamingChatModel) agent.getModel();
                 ModelStream stream = streaming.generateStream(
                     invocation.getRequest(),
@@ -308,6 +327,7 @@ final class AgentLoop {
     }
 
     private Optional<AgentResult> evaluateTermination() {
+        // 条件按注册顺序求值，第一个返回 StopSignal 的条件获胜。
         for (TerminationCondition condition : agent.getTerminationConditions()) {
             Optional<StopSignal> signal = condition.evaluate(state.snapshot());
             if (signal.isPresent()) {
@@ -364,17 +384,18 @@ final class AgentLoop {
             try {
                 plugin.onEvent(event);
             } catch (Throwable ignored) {
-                // Plugin observers are isolated from execution control.
+                // 观察型插件与执行控制隔离，观测故障不能让 Agent 失败。
             }
         }
         try {
             listener.onEvent(event);
         } catch (Throwable ignored) {
-            // Observers must not change Agent execution semantics.
+            // 调用方监听器同样只能观察，不能改变执行语义。
         }
     }
 
     private void emitTerminal(AgentResult result) {
+        // 多条异步完成路径可能竞争到这里，CAS 保证终态事件只发送一次。
         if (!terminalEventEmitted.compareAndSet(false, true)) {
             return;
         }
@@ -416,6 +437,10 @@ final class AgentLoop {
         ));
     }
 
+    /**
+     * 线程安全的一次性取消集合。取消发生后再加入的动作会被立即执行，解决
+     * “刚创建下游 future 就收到取消”的竞态。
+     */
     private static final class CancellationGroup {
         private final List<Runnable> actions = new ArrayList<Runnable>();
         private boolean cancelled;
@@ -452,7 +477,7 @@ final class AgentLoop {
             try {
                 action.run();
             } catch (Throwable ignored) {
-                // Cancellation is best effort across plugin and provider futures.
+                // 跨插件和 Provider 的取消只能尽力而为，单个动作失败不影响其他动作。
             }
         }
     }

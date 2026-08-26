@@ -23,8 +23,16 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * 一个可复用的 Agent 定义，同时也是调用方执行 Agent 的入口。
+ *
+ * <p>该对象在构建完成后保持不可变，因此可以被多个线程并发调用。每次
+ * {@code run} 都会由 {@link AgentRunner} 创建全新的运行状态；这里保存的是
+ * 配置，而不是某次对话正在变化的消息和工具结果。</p>
+ */
 public final class Agent {
 
+    /** 用于检测子 Agent 递归调用；它标识对象实例，不是某次运行的 turnId。 */
     private final String instanceId = UUID.randomUUID().toString();
     private final AgentDescriptor descriptor;
     private final String instructions;
@@ -83,6 +91,7 @@ public final class Agent {
         return new AgentBuilder();
     }
 
+    /** 同步便捷入口，内部仍然执行异步流程并等待结果。 */
     public AgentResult run(String input) {
         return run(AgentRequest.of(input));
     }
@@ -100,9 +109,10 @@ public final class Agent {
     }
 
     /**
-     * Runs this Agent with lifecycle events and model deltas when the configured
-     * model implements StreamingChatModel. Non-streaming models still emit all
-     * lifecycle, model-completed and tool events.
+     * 执行 Agent，并通过监听器报告生命周期事件。
+     *
+     * <p>配置的模型实现 {@code StreamingChatModel} 时会额外产生文本、工具参数等
+     * 增量事件；普通模型仍会产生 Turn、Step、模型完成和工具执行事件。</p>
      */
     public CompletableFuture<AgentResult> runStreamingAsync(
             String input,

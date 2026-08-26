@@ -17,6 +17,12 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * 基于 Java 8 {@link HttpURLConnection} 的 JSON POST/SSE 传输实现。
+ *
+ * <p>阻塞网络 I/O 被放到执行器中，对外仍暴露 CompletableFuture。取消 future 会
+ * 断开当前连接，从而尽快解除正在阻塞的读操作。</p>
+ */
 public final class JdkHttpTransport implements HttpTransport {
 
     private static final JdkHttpTransport SHARED = new JdkHttpTransport(
@@ -37,6 +43,7 @@ public final class JdkHttpTransport implements HttpTransport {
     public CompletableFuture<HttpResponseData> post(final HttpRequestData request) {
         final CompletableFuture<HttpResponseData> result =
             new CompletableFuture<HttpResponseData>();
+        // 保存活动连接，让任意线程上的取消都能触发 disconnect。
         final AtomicReference<HttpURLConnection> active =
             new AtomicReference<HttpURLConnection>();
         executor.execute(() -> {
@@ -167,6 +174,7 @@ public final class JdkHttpTransport implements HttpTransport {
 
     static void parseSse(InputStream input,
                          SseEventListener listener) throws Exception {
+        // SSE 以空行分隔事件；连续 data 行用换行拼接，注释行以 ':' 开头。
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(input, StandardCharsets.UTF_8))) {
             String event = null;

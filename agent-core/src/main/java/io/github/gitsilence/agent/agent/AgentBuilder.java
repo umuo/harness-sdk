@@ -26,6 +26,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * 组装不可变 {@link Agent} 的构建器。
+ *
+ * <p>这里负责把 Tool、Skill 和 Plugin 的声明转换为运行时需要的不可变注册表。
+ * 构建完成后再修改原始集合不会影响 Agent。</p>
+ */
 public final class AgentBuilder {
 
     private String name;
@@ -38,6 +44,7 @@ public final class AgentBuilder {
     private final List<AgentPlugin> plugins = new ArrayList<AgentPlugin>();
     private final List<TerminationCondition> terminationConditions =
         new ArrayList<TerminationCondition>();
+    /** 一步表示“一次模型调用 + 该模型请求的一批工具调用”。 */
     private int maxSteps = 10;
     private ToolExecutionMode toolExecutionMode = ToolExecutionMode.SEQUENTIAL;
     private ToolErrorPolicy toolErrorPolicy = ToolErrorPolicy.REPORT_TO_MODEL;
@@ -84,6 +91,7 @@ public final class AgentBuilder {
     }
 
     public AgentBuilder tool(Agent agent) {
+        // Agent 本身不是 Tool；通过适配器保证每次委托都创建独立的子状态。
         return tool(Objects.requireNonNull(agent, "agent").asTool());
     }
 
@@ -110,8 +118,8 @@ public final class AgentBuilder {
     }
 
     /**
-     * Recursively discovers Skills and fails fast when any SKILL.md is invalid.
-     * Use SkillLoader.discover directly when partial loading is preferred.
+     * 递归发现 Skill；任意 {@code SKILL.md} 无效时立即构建失败。
+     * 如需接受部分有效结果，应直接调用 {@link SkillLoader#discover(Path)}。
      */
     public AgentBuilder skillsFrom(Path root) {
         SkillLoader.Discovery discovery = SkillLoader.discover(root);
@@ -141,6 +149,7 @@ public final class AgentBuilder {
     }
 
     public AgentBuilder parallelToolCalls(boolean parallel) {
+        // 该配置只影响同一模型响应中多个 Tool Call 的执行方式；回填顺序仍固定。
         this.toolExecutionMode = parallel
             ? ToolExecutionMode.PARALLEL
             : ToolExecutionMode.SEQUENTIAL;
@@ -176,6 +185,7 @@ public final class AgentBuilder {
         AgentDescriptor descriptor = new AgentDescriptor(name, description);
         Objects.requireNonNull(model, "model");
 
+        // 系统提示只放入 Skill 元数据，正文等模型调用 skill_load 时再按需加载。
         SkillRegistry skillRegistry = SkillRegistry.of(skills);
         StringBuilder composedInstructions = new StringBuilder(instructions);
         String skillPrompt = SkillPromptFormatter.format(skillRegistry);
@@ -190,9 +200,11 @@ public final class AgentBuilder {
             registry.register(tool);
         }
         if (!skillRegistry.isEmpty()) {
+            // 注册 Skill 时自动暴露加载工具，无需调用方手工添加。
             registry.register(new SkillLoadTool(skillRegistry));
         }
 
+        // 插件在构建阶段展开为有序拦截器链，执行期间不再动态增删。
         List<ModelInterceptor> modelInterceptors =
             new ArrayList<ModelInterceptor>();
         List<ToolInterceptor> toolInterceptors =

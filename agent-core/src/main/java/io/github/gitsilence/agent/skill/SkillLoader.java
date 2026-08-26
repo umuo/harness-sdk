@@ -23,7 +23,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/** Loads and discovers Agent Skills backed by standard SKILL.md documents. */
+/**
+ * 加载和递归发现以标准 {@code SKILL.md} 为入口的 Agent Skill。
+ *
+ * <p>这里只解析轻量元数据，不会执行脚本，也不会把正文直接加入模型上下文。
+ * Skill 正文由 {@link SkillLoadTool} 在模型明确请求时加载。</p>
+ */
 public final class SkillLoader {
 
     private static final String FILE_NAME = "SKILL.md";
@@ -36,7 +41,7 @@ public final class SkillLoader {
     private SkillLoader() {
     }
 
-    /** Loads one Skill from either its directory or its SKILL.md path. */
+    /** 从 Skill 目录或具体的 {@code SKILL.md} 文件加载一项定义。 */
     public static Skill load(Path path) {
         if (path == null) {
             throw new NullPointerException("path");
@@ -93,8 +98,8 @@ public final class SkillLoader {
     }
 
     /**
-     * Recursively discovers SKILL.md files. Invalid entries are returned as
-     * diagnostics so one bad package does not hide valid neighboring Skills.
+     * 递归发现 {@code SKILL.md}。无效项作为诊断返回，避免一个坏 Skill 遮蔽同目录
+     * 下其他有效 Skill；是否接受部分结果由调用方决定。
      */
     public static Discovery discover(Path root) {
         if (root == null) {
@@ -137,6 +142,7 @@ public final class SkillLoader {
             ));
         }
 
+        // 固定发现顺序，使系统提示、注册表和测试结果保持确定性。
         Collections.sort(files, Comparator.comparing(Path::toString));
         List<Skill> skills = new ArrayList<Skill>();
         for (Path file : files) {

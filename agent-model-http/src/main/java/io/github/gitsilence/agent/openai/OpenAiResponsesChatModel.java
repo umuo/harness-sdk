@@ -26,9 +26,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 
-/**
- * OpenAI Responses API provider with non-streaming and SSE streaming support.
- */
+/** 支持完整响应和 SSE 流式响应的 OpenAI Responses API 协议适配器。 */
 public final class OpenAiResponsesChatModel extends AbstractHttpChatModel {
 
     public static final String DEFAULT_BASE_URL = "https://api.openai.com/v1";
@@ -58,6 +56,7 @@ public final class OpenAiResponsesChatModel extends AbstractHttpChatModel {
 
     @Override
     protected ObjectNode encodeRequest(ModelRequest request, boolean stream) {
+        // Responses API 将 system 指令和 input items 分开编码。
         Objects.requireNonNull(request, "request");
         ObjectNode root = mapper().createObjectNode();
         root.put("model", model);

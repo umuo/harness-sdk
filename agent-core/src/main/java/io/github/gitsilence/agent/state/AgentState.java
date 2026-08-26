@@ -13,6 +13,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 单次 Agent Turn 独占的可变状态。
+ *
+ * <p>状态不会跨 Turn 或父子 Agent 共享。所有修改方法都进行同步，既保护并行工具
+ * 访问，也保证状态机转换具有一致视图；对外暴露时使用不可变的
+ * {@link AgentStateSnapshot}。</p>
+ */
 public final class AgentState {
 
     private final String runId;
@@ -44,6 +51,7 @@ public final class AgentState {
     }
 
     public synchronized void start() {
+        // CREATED 只能进入一次 RUNNING，避免同一个状态被重复执行。
         requireStatus(ExecutionStatus.CREATED);
         status = ExecutionStatus.RUNNING;
         startedAt = Instant.now();
@@ -51,6 +59,7 @@ public final class AgentState {
 
     public synchronized void beginStep() {
         requireStatus(ExecutionStatus.RUNNING);
+        // Step 在模型调用前递增；一次工具调用本身不会额外消耗 Step。
         step++;
     }
 
@@ -88,6 +97,7 @@ public final class AgentState {
     }
 
     public synchronized void fail(Throwable throwable) {
+        // 已正常结束或取消的 Turn 不允许被迟到的异步异常覆盖。
         if (status == ExecutionStatus.COMPLETED
             || status == ExecutionStatus.STOPPED
             || status == ExecutionStatus.CANCELLED) {
@@ -108,6 +118,7 @@ public final class AgentState {
     }
 
     public synchronized List<ChatMessage> messagesSnapshot() {
+        // 返回副本，防止模型 Provider 意外修改正在运行的消息列表。
         return new ArrayList<ChatMessage>(messages);
     }
 
