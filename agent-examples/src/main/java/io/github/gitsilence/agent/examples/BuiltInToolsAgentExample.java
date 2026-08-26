@@ -16,11 +16,13 @@ import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-/** Runs read_file, write_file, edit, glob, and Bash in a bounded workspace. */
+/** Runs file, multi-file patch, glob, and Bash Tools in a bounded workspace. */
 public final class BuiltInToolsAgentExample {
 
     private static final Set<String> EXPECTED_TOOLS = new LinkedHashSet<String>(
-        Arrays.asList("glob", "read_file", "write_file", "edit", "bash")
+        Arrays.asList(
+            "glob", "read_file", "write_file", "edit", "apply_patch", "bash"
+        )
     );
 
     private BuiltInToolsAgentExample() {
@@ -39,7 +41,8 @@ public final class BuiltInToolsAgentExample {
                 .name("workspace_agent")
                 .description("在隔离工作目录中验证全部内置文件和 Bash 工具")
                 .instructions(
-                    "必须严格按顺序完成任务，并且实际调用 glob、read_file、write_file、edit、bash。"
+                    "必须严格按顺序完成任务，并且实际调用 glob、read_file、write_file、"
+                        + "edit、apply_patch、bash。"
                         + "不要用 Bash 替代专用文件工具。"
                         + tools.getInstructions()
                         + "所有解释和最终答案都使用中文。"
@@ -58,8 +61,9 @@ public final class BuiltInToolsAgentExample {
                     + "3）用 write_file 创建 report.md，内容必须包含 source.txt 的摘要和独占一行的“状态：待复核”；"
                     + "4）用 read_file 读取 report.md；"
                     + "5）用 edit 把“状态：待复核”精确替换为“状态：已复核”；"
-                    + "6）用 bash 执行 wc -l report.md；"
-                    + "7）最后再用 read_file 验证 report.md，并汇报每个工具的结果。"
+                    + "6）用 apply_patch 把“状态：已复核”改为“状态：已归档”；"
+                    + "7）用 bash 执行 wc -l report.md；"
+                    + "8）最后再用 read_file 验证 report.md，并汇报每个工具的结果。"
             ));
             verifyTools(result);
             ExampleSupport.printResult(result);

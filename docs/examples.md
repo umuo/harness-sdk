@@ -56,7 +56,7 @@ mvn -q -pl agent-examples exec:java \
 | `ObservabilityExample` | 真实的 Provider 请求和响应以及捕获的内容会被导出 |
 | `ComplexTaskDelegationExample` | 一个复杂的任务被拆分给需求、架构和风险的子 Agent；一次多调用 (multi-call) 响应将它们在并行工具执行中运行 |
 | `TodoAgentExample` | 真实模型必须行使 `ADD`、`UPDATE`、`COMPLETE` 和 `LIST`，留下至少三个完成的回合作用域 (Turn-scoped) 待办事项，然后作答 |
-| `BuiltInToolsAgentExample` | 真实模型必须在受限示例工作区中调用 `glob`、`read_file`、`write_file`、`edit` 和 `bash` |
+| `BuiltInToolsAgentExample` | 真实模型必须在受限示例工作区中调用 `glob`、`read_file`、`write_file`、`edit`、`apply_patch` 和 `bash` |
 | `StreamingAgentExample` | `runStreamingAsync` 必须在得到完整结果之前接收到至少一个实际的 `TEXT_DELTA` |
 | `McpAgentExample` | 发现标准输入/输出 (stdio) 的文件系统 MCP 服务器，真实模型必须至少调用一个带命名空间的 MCP 工具 |
 | `SkillsAgentExample` | 真实模型必须通过 `skill_load` 渐进式地加载 `SKILL.md` 和 `references/template.md` |

@@ -23,6 +23,7 @@ public final class WorkspaceTools {
     private final Tool readFile;
     private final Tool writeFile;
     private final Tool edit;
+    private final Tool applyPatch;
     private final Tool glob;
     private final Tool bash;
     private final List<Tool> tools;
@@ -51,6 +52,16 @@ public final class WorkspaceTools {
         this.edit = EditTool.create(
             paths, observations, locks, builder.maxEditableBytes
         );
+        this.applyPatch = ApplyPatchTool.create(
+            paths,
+            observations,
+            locks,
+            builder.maxPatchBytes,
+            builder.maxPatchFiles,
+            builder.maxPatchAffectedBytes,
+            builder.maxWriteBytes,
+            builder.maxEditableBytes
+        );
         ToolOutputStore outputStore = new ToolOutputStore(
             builder.toolOutputDirectory
         );
@@ -76,6 +87,7 @@ public final class WorkspaceTools {
         assembled.add(readFile);
         assembled.add(writeFile);
         assembled.add(edit);
+        assembled.add(applyPatch);
         assembled.add(glob);
         if (bash != null) assembled.add(bash);
         this.tools = Collections.unmodifiableList(assembled);
@@ -94,7 +106,8 @@ public final class WorkspaceTools {
         return "Use read_file instead of shell commands to inspect text files; "
             + "continue large files with offset and limit. Use glob instead "
             + "of shell find to discover files. Read an existing file before "
-            + "write_file or edit, and prefer edit for targeted changes."
+            + "write_file, edit, or apply_patch. Prefer edit for one exact "
+            + "replacement and apply_patch for related multi-file changes."
             + (bash == null ? "" : " Check every bash exit-code, stderr, "
                 + "timeout and truncation marker before continuing.");
     }
@@ -103,6 +116,7 @@ public final class WorkspaceTools {
     public Tool getReadFile() { return readFile; }
     public Tool getWriteFile() { return writeFile; }
     public Tool getEdit() { return edit; }
+    public Tool getApplyPatch() { return applyPatch; }
     public Tool getGlob() { return glob; }
     public Optional<Tool> getBash() { return Optional.ofNullable(bash); }
     public List<Tool> getTools() { return tools; }
@@ -113,6 +127,9 @@ public final class WorkspaceTools {
         positive("readMaxBytes", builder.readMaxBytes);
         positive("maxWriteBytes", builder.maxWriteBytes);
         positive("maxEditableBytes", builder.maxEditableBytes);
+        positive("maxPatchBytes", builder.maxPatchBytes);
+        positive("maxPatchFiles", builder.maxPatchFiles);
+        positive("maxPatchAffectedBytes", builder.maxPatchAffectedBytes);
         positive("globMaxResults", builder.globMaxResults);
         positive("globMaxScannedEntries", builder.globMaxScannedEntries);
         positive("bashDefaultTimeoutMillis", builder.bashDefaultTimeoutMillis);
@@ -149,6 +166,9 @@ public final class WorkspaceTools {
         private int readMaxBytes = 50 * 1024;
         private int maxWriteBytes = 5 * 1024 * 1024;
         private int maxEditableBytes = 5 * 1024 * 1024;
+        private int maxPatchBytes = 1024 * 1024;
+        private int maxPatchFiles = 100;
+        private int maxPatchAffectedBytes = 20 * 1024 * 1024;
         private int globMaxResults = 100;
         private int globMaxScannedEntries = 100000;
         private boolean bashEnabled;
@@ -195,6 +215,24 @@ public final class WorkspaceTools {
 
         public Builder maxEditableBytes(int value) {
             this.maxEditableBytes = value;
+            return this;
+        }
+
+        /** 限制一次 {@code apply_patch} 调用的 UTF-8 输入字节数。 */
+        public Builder maxPatchBytes(int value) {
+            this.maxPatchBytes = value;
+            return this;
+        }
+
+        /** 限制一次补丁涉及的不同源路径和目标路径总数。 */
+        public Builder maxPatchFiles(int value) {
+            this.maxPatchFiles = value;
+            return this;
+        }
+
+        /** 限制补丁预检期间读取与生成的文本总字节数。 */
+        public Builder maxPatchAffectedBytes(int value) {
+            this.maxPatchAffectedBytes = value;
             return this;
         }
 

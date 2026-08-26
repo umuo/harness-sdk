@@ -50,6 +50,11 @@ class WorkspaceToolsTest {
         String bashSchema = tools.getBash().get().definition().getInputSchema();
         assertTrue(bashSchema.contains("\"timeout_ms\""));
         assertFalse(bashSchema.contains("\"timeoutMillis\""));
+
+        String patchSchema = tools.getApplyPatch().definition().getInputSchema();
+        assertTrue(patchSchema.contains("\"patch\""));
+        assertTrue(patchSchema.contains("\"required\":[\"patch\"]"));
+        assertTrue(tools.getTools().contains(tools.getApplyPatch()));
     }
 
     @Test
@@ -448,9 +453,271 @@ class WorkspaceToolsTest {
         assertTrue(record.getResult().getContent().contains("timed out after 50ms"));
     }
 
+    @Test
+    void applyPatchHandlesMultipleFilesChunksAndMove() throws Exception {
+        Path root = workspace();
+        Files.createDirectories(root.resolve("old"));
+        Files.write(
+            root.resolve("modify.txt"),
+            "one\ntwo\nthree\nfour\n".getBytes(StandardCharsets.UTF_8)
+        );
+        Files.write(
+            root.resolve("delete.txt"),
+            "delete me\n".getBytes(StandardCharsets.UTF_8)
+        );
+        Files.write(
+            root.resolve("old/name.txt"),
+            "old content\n".getBytes(StandardCharsets.UTF_8)
+        );
+        WorkspaceTools tools = WorkspaceTools.builder(root)
+            .requireReadBeforeMutation(false)
+            .build();
+        String patch = "*** Begin Patch\n"
+            + "*** Add File: nested/new.txt\n"
+            + "+created\n"
+            + "*** Delete File: delete.txt\n"
+            + "*** Update File: modify.txt\n"
+            + "@@\n-two\n+TWO\n"
+            + "@@\n-four\n+FOUR\n"
+            + "*** Update File: old/name.txt\n"
+            + "*** Move to: renamed/dir/name.txt\n"
+            + "@@\n-old content\n+new content\n"
+            + "*** End Patch";
+        ScriptedModel model = new ScriptedModel(
+            tool("patch-1", "apply_patch",
+                "{\"patch\":\"" + json(patch) + "\"}"),
+            finalAnswer("done")
+        );
+
+        AgentResult result = agent(tools, model).run("apply changes");
+
+        ToolResult applied = result.getState().getToolResults().get(0).getResult();
+        assertFalse(applied.isError());
+        assertEquals(4, applied.getMetadata().get("actions"));
+        assertEquals(5, applied.getMetadata().get("pathsAffected"));
+        assertTrue(applied.getContent().contains("A nested/new.txt"));
+        assertTrue(applied.getContent().contains("D delete.txt"));
+        assertTrue(applied.getContent().contains("M modify.txt"));
+        assertTrue(applied.getContent().contains(
+            "M old/name.txt -> renamed/dir/name.txt"
+        ));
+        assertEquals("created\n", read(root.resolve("nested/new.txt")));
+        assertEquals("one\nTWO\nthree\nFOUR\n",
+            read(root.resolve("modify.txt")));
+        assertFalse(Files.exists(root.resolve("delete.txt")));
+        assertFalse(Files.exists(root.resolve("old/name.txt")));
+        assertEquals("new content\n",
+            read(root.resolve("renamed/dir/name.txt")));
+    }
+
+    @Test
+    void applyPatchRequiresReadBeforeChangingExistingFile() throws Exception {
+        Path root = workspace();
+        Path file = root.resolve("source.txt");
+        Files.write(file, "before\n".getBytes(StandardCharsets.UTF_8));
+        WorkspaceTools tools = WorkspaceTools.builder(root).build();
+        String patch = "*** Begin Patch\n"
+            + "*** Update File: source.txt\n"
+            + "@@\n-before\n+after\n"
+            + "*** End Patch";
+        ScriptedModel model = new ScriptedModel(
+            tool("patch-1", "apply_patch",
+                "{\"patch\":\"" + json(patch) + "\"}"),
+            tool("read-1", "read_file", "{\"file_path\":\"source.txt\"}"),
+            tool("patch-2", "apply_patch",
+                "{\"patch\":\"" + json(patch) + "\"}"),
+            finalAnswer("done")
+        );
+
+        AgentResult result = agent(tools, model).run("update source");
+
+        List<ToolExecutionRecord> records = result.getState().getToolResults();
+        assertEquals("FILE_NOT_OBSERVED",
+            records.get(0).getResult().getErrorInfo().getCode());
+        assertFalse(records.get(1).getResult().isError());
+        assertFalse(records.get(2).getResult().isError());
+        assertEquals("after\n", read(file));
+    }
+
+    @Test
+    void applyPatchPreflightLeavesEveryFileUnchangedOnContextFailure()
+            throws Exception {
+        Path root = workspace();
+        Path existing = root.resolve("existing.txt");
+        Files.write(existing, "original\n".getBytes(StandardCharsets.UTF_8));
+        WorkspaceTools tools = WorkspaceTools.builder(root)
+            .requireReadBeforeMutation(false)
+            .build();
+        String patch = "*** Begin Patch\n"
+            + "*** Add File: created.txt\n"
+            + "+would be created\n"
+            + "*** Update File: existing.txt\n"
+            + "@@\n-missing\n+changed\n"
+            + "*** End Patch";
+        ScriptedModel model = new ScriptedModel(
+            tool("patch-1", "apply_patch",
+                "{\"patch\":\"" + json(patch) + "\"}"),
+            finalAnswer("handled")
+        );
+
+        AgentResult result = agent(tools, model).run("apply invalid patch");
+
+        ToolResult failed = result.getState().getToolResults().get(0).getResult();
+        assertEquals("PATCH_CONTEXT_NOT_FOUND", failed.getErrorInfo().getCode());
+        assertFalse(Files.exists(root.resolve("created.txt")));
+        assertEquals("original\n", read(existing));
+    }
+
+    @Test
+    void applyPatchPreservesCrLfAndMixedContextEndings() throws Exception {
+        Path root = workspace();
+        Path file = root.resolve("lines.txt");
+        Path mixed = root.resolve("mixed.txt");
+        Files.write(
+            file,
+            "one\r\ntwo\r\nthree\r\n".getBytes(StandardCharsets.UTF_8)
+        );
+        Files.write(
+            mixed,
+            "one\r\ntwo\rthree\nfour\r\n".getBytes(StandardCharsets.UTF_8)
+        );
+        WorkspaceTools tools = WorkspaceTools.builder(root)
+            .requireReadBeforeMutation(false)
+            .build();
+        String patch = "*** Begin Patch\n"
+            + "*** Update File: lines.txt\n"
+            + "@@\n"
+            + "-one\n+ONE\n two\n+between\n three\n"
+            + "*** Update File: mixed.txt\n"
+            + "@@\n one\n two\n-three\n+THREE\n four\n"
+            + "*** End Patch";
+        ScriptedModel model = new ScriptedModel(
+            tool("patch-1", "apply_patch",
+                "{\"patch\":\"" + json(patch) + "\"}"),
+            finalAnswer("done")
+        );
+
+        AgentResult result = agent(tools, model).run("patch CRLF file");
+
+        assertFalse(result.getState().getToolResults().get(0)
+            .getResult().isError());
+        assertEquals("ONE\r\ntwo\r\nbetween\r\nthree\r\n", read(file));
+        assertEquals("one\r\ntwo\rTHREE\r\nfour\r\n", read(mixed));
+    }
+
+    @Test
+    void applyPatchSupportsContextHintsEofAndPureAppend() throws Exception {
+        Path root = workspace();
+        Path target = root.resolve("target.txt");
+        Path append = root.resolve("append.txt");
+        Files.write(
+            target,
+            "section\nalpha  \ntail\n".getBytes(StandardCharsets.UTF_8)
+        );
+        Files.write(append, "base\n".getBytes(StandardCharsets.UTF_8));
+        WorkspaceTools tools = WorkspaceTools.builder(root)
+            .requireReadBeforeMutation(false)
+            .build();
+        String patch = " *** Begin Patch\n"
+            + "  *** Update File: target.txt\n"
+            + "@@ section\n-alpha\n+ALPHA\n"
+            + "@@\n-tail\n+TAIL\n*** End of File\n"
+            + "*** Update File: append.txt\n"
+            + "@@\n+appended\n"
+            + " *** End Patch ";
+        ScriptedModel model = new ScriptedModel(
+            tool("patch-1", "apply_patch",
+                "{\"patch\":\"" + json(patch) + "\"}"),
+            finalAnswer("done")
+        );
+
+        AgentResult result = agent(tools, model).run("apply contextual patch");
+
+        assertFalse(result.getState().getToolResults().get(0)
+            .getResult().isError());
+        assertEquals("section\nALPHA\nTAIL\n", read(target));
+        assertEquals("base\nappended\n", read(append));
+    }
+
+    @Test
+    void applyPatchRejectsWorkspaceEscapeAndOversizedInput() throws Exception {
+        Path root = workspace();
+        Path outside = temporary.resolve("outside-patch.txt");
+        WorkspaceTools tools = WorkspaceTools.builder(root)
+            .maxPatchBytes(512)
+            .build();
+        String outsidePatch = "*** Begin Patch\n"
+            + "*** Add File: " + outside + "\n"
+            + "+secret\n*** End Patch";
+        String largePatch = "*** Begin Patch\n*** Add File: large.txt\n+"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+            + "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz\n"
+            + "*** End Patch";
+        ScriptedModel model = new ScriptedModel(
+            tool("patch-1", "apply_patch",
+                "{\"patch\":\"" + json(outsidePatch) + "\"}"),
+            tool("patch-2", "apply_patch",
+                "{\"patch\":\"" + json(largePatch) + "\"}"),
+            finalAnswer("handled")
+        );
+
+        AgentResult result = agent(tools, model).run("reject unsafe patches");
+
+        List<ToolExecutionRecord> records = result.getState().getToolResults();
+        assertEquals("PATH_OUTSIDE_WORKSPACE",
+            records.get(0).getResult().getErrorInfo().getCode());
+        assertEquals("PATCH_TOO_LARGE",
+            records.get(1).getResult().getErrorInfo().getCode());
+        assertFalse(Files.exists(outside));
+        assertFalse(Files.exists(root.resolve("large.txt")));
+    }
+
+    @Test
+    void applyPatchRollsBackEarlierWritesWhenCommitFails() throws Exception {
+        Path root = workspace();
+        Path source = root.resolve("source.txt");
+        Path blocker = root.resolve("blocker");
+        Files.write(source, "old\n".getBytes(StandardCharsets.UTF_8));
+        Files.write(blocker, "not a directory\n".getBytes(StandardCharsets.UTF_8));
+        WorkspaceTools tools = WorkspaceTools.builder(root)
+            .requireReadBeforeMutation(false)
+            .build();
+        String patch = "*** Begin Patch\n"
+            + "*** Add File: created.txt\n+temporary\n"
+            + "*** Update File: source.txt\n"
+            + "*** Move to: blocker/child.txt\n"
+            + "@@\n-old\n+new\n"
+            + "*** End Patch";
+        ScriptedModel model = new ScriptedModel(
+            tool("patch-1", "apply_patch",
+                "{\"patch\":\"" + json(patch) + "\"}"),
+            finalAnswer("handled")
+        );
+
+        AgentResult result = agent(tools, model).run("exercise rollback");
+
+        ToolResult failed = result.getState().getToolResults().get(0).getResult();
+        assertEquals("PATCH_APPLY_FAILED", failed.getErrorInfo().getCode());
+        assertFalse(Files.exists(root.resolve("created.txt")));
+        assertEquals("old\n", read(source));
+        assertEquals("not a directory\n", read(blocker));
+    }
+
     private Path workspace() throws IOException {
         Path root = temporary.resolve("workspace-" + System.nanoTime());
         return Files.createDirectories(root);
+    }
+
+    private static String read(Path path) throws IOException {
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
     }
 
     private static Agent agent(WorkspaceTools tools, ChatModel model) {

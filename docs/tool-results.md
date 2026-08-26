@@ -46,7 +46,7 @@ has reference -> reuse that source                         -> preview
 - `read_file` 会对原始文件进行分页并附加该源路径。它绝不会仅仅因为分页受限而复制整个大型源文件。
 - `glob` 会保留排序后的预览，一旦结果数量超过预览限制，便将每个匹配项延迟流式传输到一个输出文件中。
 - `bash` 在进程运行时捕获原始的 stdout 和 stderr。如果任何一个被截断，那么这两个完整的流都会被保留并引用。
-- `write_file`、`edit` 和 Todo 工具返回紧凑的状态数据，通常不需要生产者溢出（producer spill）。
+- `write_file`、`edit`、`apply_patch` 和 Todo 工具返回紧凑的状态数据，通常不需要生产者溢出（producer spill）。
 - 自定义工具、Agent-as-Tool 和未来的工具均受到最终策略的保护。能够输出无界数据的生产者应该直接流式传输到 `ToolOutputStore`，而不是首先在内存中生成一个巨大的 `String`。
 
 当使用自定义输出目录时，请使用相同的路径配置通用策略和工作区工具，以便 `read_file` 可以检查它：
