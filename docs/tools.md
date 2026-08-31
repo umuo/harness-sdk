@@ -68,12 +68,36 @@ public final class LookupTool
 
 `executeAsync` 必须返回一个非空的 future，并且在返回之前不应当阻塞。取消操作和异常在 Agent 运行时中仍然是可见的。
 
+## 安全并行能力
+
+Tool 默认不参与并行执行。只有实现能够证明自身线程安全、没有共享写入副作用，且
+不依赖同一批次内其他调用的完成顺序时，才能显式选择并行能力：
+
+```java
+public final class LookupTool extends AbstractAsyncTool<LookupTool.Input> {
+    public LookupTool() {
+        super("lookup", "Looks up one record", Input.class, true);
+    }
+}
+
+Tool health = Tools.async(definition, true, handler);
+
+@Tool(description = "Reads one cached value", parallel = true)
+public String cachedValue(String key) {
+    return cache.get(key);
+}
+```
+
+Agent 还必须配置 `.parallelToolCalls(true)` 才会使用这些声明。运行时只并发执行连续
+的并行安全调用；写文件、更新状态、调用具有顺序语义的外部系统等 Tool 应保持默认
+独占。Tool 拦截器可以改写调用，但不能把已经进入并行阶段的调用改写成独占 Tool。
+
 ## 基于注解的 Tools
 
 ```java
 public final class MathTools {
 
-    @Tool("Multiplies two integers")
+    @Tool(value = "Multiplies two integers", parallel = true)
     public CompletableFuture<Long> multiply(
             @ToolParam("First integer") long a,
             @ToolParam("Second integer") long b,

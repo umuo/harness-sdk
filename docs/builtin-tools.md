@@ -45,6 +45,10 @@ Agent codingAgent = Agent.builder()
 
 没有 `/` 的 glob 模式会在任意深度匹配基础名称（basenames）。达到上限的读取结果会提示模型下一次应该请求哪个偏移量（offset）。达到上限的 glob 结果会返回一个缩小范围的提示（narrowing hint），以及一个包含按遍历顺序排列的所有匹配结果的文件路径。
 
+`read_file` 和 `glob` 只读取工作区，并显式声明支持安全并行。`write_file`、`edit`、
+`apply_patch` 和 `bash` 保持独占；因此启用 `.parallelToolCalls(true)` 后，多个连续读取
+可以同时执行，而任何修改或命令调用都会成为前后读取阶段之间的顺序屏障。
+
 ## 多文件补丁
 
 `apply_patch` 使用与 Codex 相同的核心标记和行前缀。例如：

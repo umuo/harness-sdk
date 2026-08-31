@@ -34,6 +34,7 @@ class TypedToolsTest {
         assertTrue(schema.contains("Name to greet"));
         assertTrue(schema.contains("\"required\":[\"user_name\"]"));
         assertTrue(schema.contains("\"additionalProperties\":false"));
+        assertFalse(tool.supportsParallelToolCalls());
 
         ToolResult result = tool.execute(
             ToolArguments.parse("{\"user_name\":\"Ada\"}"), context()
@@ -92,6 +93,7 @@ class TypedToolsTest {
         assertTrue(schema.contains("\"prefix\""));
         assertFalse(schema.contains("ToolContext"));
         assertTrue(schema.contains("\"required\":[\"text\"]"));
+        assertTrue(tool.supportsParallelToolCalls());
 
         ToolResult result = tool.execute(
             ToolArguments.parse("{\"text\":\"ok\"}"), context
@@ -192,7 +194,8 @@ class TypedToolsTest {
 
         @io.github.gitsilence.agent.tool.annotation.Tool(
             name = "describe",
-            description = "Describes text"
+            description = "Describes text",
+            parallel = true
         )
         public CompletableFuture<String> describe(
                 @ToolParam(description = "Text to describe") String text,

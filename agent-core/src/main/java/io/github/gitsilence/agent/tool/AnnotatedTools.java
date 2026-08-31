@@ -55,6 +55,7 @@ public final class AnnotatedTools {
         private final ToolDefinition definition;
         private final List<ParameterBinding> bindings;
         private final Set<String> parameterNames;
+        private final boolean supportsParallelToolCalls;
 
         private ReflectiveTool(Object target, Method method) {
             if (!Modifier.isPublic(method.getModifiers())) {
@@ -79,6 +80,7 @@ public final class AnnotatedTools {
                 : annotation.name().trim();
             this.bindings = bindings(method);
             this.parameterNames = parameterNames(bindings);
+            this.supportsParallelToolCalls = annotation.parallel();
             this.definition = ToolDefinition.builder()
                 .name(name)
                 .description(toolDescription(annotation, method))
@@ -89,6 +91,11 @@ public final class AnnotatedTools {
         @Override
         public ToolDefinition definition() {
             return definition;
+        }
+
+        @Override
+        public boolean supportsParallelToolCalls() {
+            return supportsParallelToolCalls;
         }
 
         @Override

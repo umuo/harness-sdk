@@ -10,8 +10,21 @@ public abstract class AbstractAsyncTool<I> implements Tool {
 
     private final ToolDefinition definition;
     private final ToolInputBinding<I> inputBinding;
+    private final boolean supportsParallelToolCalls;
 
     protected AbstractAsyncTool(String name, String description, Class<I> inputType) {
+        this(name, description, inputType, false);
+    }
+
+    /**
+     * 创建强类型异步 Tool，并显式声明其并行安全能力。
+     *
+     * @param supportsParallelToolCalls 仅当整个异步操作可安全并发时传入 {@code true}
+     */
+    protected AbstractAsyncTool(String name,
+                                String description,
+                                Class<I> inputType,
+                                boolean supportsParallelToolCalls) {
         this.inputBinding = ToolInputBinding.create(
             Objects.requireNonNull(inputType, "inputType")
         );
@@ -20,11 +33,17 @@ public abstract class AbstractAsyncTool<I> implements Tool {
             .description(description)
             .inputSchema(inputBinding.schema())
             .build();
+        this.supportsParallelToolCalls = supportsParallelToolCalls;
     }
 
     @Override
     public final ToolDefinition definition() {
         return definition;
+    }
+
+    @Override
+    public final boolean supportsParallelToolCalls() {
+        return supportsParallelToolCalls;
     }
 
     @Override

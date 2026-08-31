@@ -54,7 +54,8 @@ final class ReadFileTool extends AbstractTool<ReadFileTool.Input> {
             "read_file",
             "Read a UTF-8 text file with 1-based line numbers. "
                 + "Use offset and limit to page through large files.",
-            Input.class
+            Input.class,
+            true
         );
         this.paths = paths;
         this.observations = observations;

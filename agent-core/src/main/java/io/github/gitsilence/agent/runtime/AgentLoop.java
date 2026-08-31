@@ -182,7 +182,7 @@ final class AgentLoop {
                     state.getStep(), call
                 ));
             }
-            // 同一响应里的 Tool Call 作为一个批次执行；执行模式由 Agent 配置决定。
+            // 同一响应里的调用作为一个批次；并行模式仍尊重 Tool 的独占能力声明。
             CompletableFuture<List<ToolExecutionRecord>> tools = toolExecutor.executeAll(
                 assistant.getToolCalls(),
                 call -> new ToolContext(call.getId(), state, runner, path),
@@ -210,7 +210,7 @@ final class AgentLoop {
     }
 
     private void appendToolResults(List<ToolExecutionRecord> records) {
-        // 即使工具并行完成，ToolExecutor 也会按模型原始调用顺序返回记录。
+        // 即使并行安全的工具同时完成，ToolExecutor 仍按模型原始顺序返回记录。
         for (ToolExecutionRecord record : records) {
             state.appendToolExecution(record);
             state.appendMessage(ChatMessage.tool(

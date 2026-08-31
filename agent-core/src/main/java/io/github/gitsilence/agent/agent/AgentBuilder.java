@@ -149,7 +149,7 @@ public final class AgentBuilder {
     }
 
     public AgentBuilder parallelToolCalls(boolean parallel) {
-        // 该配置只影响同一模型响应中多个 Tool Call 的执行方式；回填顺序仍固定。
+        // 开启后仍由每个 Tool 的能力声明决定是否并行；未声明的 Tool 保持独占。
         this.toolExecutionMode = parallel
             ? ToolExecutionMode.PARALLEL
             : ToolExecutionMode.SEQUENTIAL;

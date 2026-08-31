@@ -59,7 +59,8 @@ final class GlobTool extends AbstractTool<GlobTool.Input> {
             "glob",
             "Find files by glob pattern inside the workspace. A pattern "
                 + "without '/' matches file names at any depth.",
-            Input.class
+            Input.class,
+            true
         );
         this.paths = paths;
         this.maxResults = maxResults;

@@ -98,7 +98,15 @@ CREATED -> RUNNING -> COMPLETED
 
 ## 并发
 
-公共异步契约使用 `CompletableFuture`。工具批次可以是顺序的或并行的。并行结果始终按照原始调用顺序归约到 AgentState 中，这保持了消息历史的确定性。
+公共异步契约使用 `CompletableFuture`。工具批次可以是顺序的或安全并行的。安全
+并行借鉴 Codex 的每 Tool 能力门控：默认 Tool 是独占的，连续且显式声明并行安全
+的调用组成一个并行阶段，独占 Tool 是阶段之间的顺序屏障。拦截器若把已进入并行
+阶段的调用改写成独占 Tool，运行时会以 `TOOL_PARALLEL_POLICY_CHANGED` 拒绝执行。
+并行结果始终按照原始调用顺序归约到 AgentState 中，这保持了消息历史的确定性。
+
+与 Codex 的 Tool Call timing guard 一致，每个批次在进入调度器时捕获一个调度时间，
+实际通过阶段屏障时捕获处理器开始时间，完成时得到 dispatch、handler 和 total 三段
+耗时。耗时使用 `System.nanoTime()`，墙上时间仅用于可读时间戳和 Trace 边界。
 
 Java 8 没有 `CompletableFuture.orTimeout`，因此超时是通过将操作与 `ScheduledExecutorService` 任务进行竞争 (racing) 来实现的。
 

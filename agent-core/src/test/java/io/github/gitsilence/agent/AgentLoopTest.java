@@ -21,6 +21,7 @@ import io.github.gitsilence.agent.runtime.TerminationCondition;
 import io.github.gitsilence.agent.tool.Tool;
 import io.github.gitsilence.agent.tool.ToolDefinition;
 import io.github.gitsilence.agent.tool.ToolErrorPolicy;
+import io.github.gitsilence.agent.tool.ToolExecutionRecord;
 import io.github.gitsilence.agent.tool.ToolResult;
 import io.github.gitsilence.agent.tool.Tools;
 import org.junit.jupiter.api.Test;
@@ -34,10 +35,12 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -145,7 +148,7 @@ class AgentLoopTest {
     }
 
     @Test
-    void keepsParallelToolResultsInCallOrder() {
+    void keepsParallelToolResultsInCallOrder() throws Exception {
         ToolCall slowCall = new ToolCall("slow-call", "slow", "{}");
         ToolCall fastCall = new ToolCall("fast-call", "fast", "{}");
         ScriptedChatModel model = new ScriptedChatModel(
@@ -154,20 +157,166 @@ class AgentLoopTest {
             )),
             ModelResponse.of(ChatMessage.assistant("done"))
         );
-        Tool slow = asyncValueTool("slow", "slow-result", 80L);
-        Tool fast = asyncValueTool("fast", "fast-result", 5L);
+        CompletableFuture<ToolResult> releaseSlow =
+            new CompletableFuture<ToolResult>();
+        CompletableFuture<Void> fastStarted = new CompletableFuture<Void>();
+        Tool slow = Tools.async(
+            ToolDefinition.builder().name("slow").description("Slow read").build(),
+            true,
+            (arguments, context) -> releaseSlow
+        );
+        Tool fast = Tools.async(
+            ToolDefinition.builder().name("fast").description("Fast read").build(),
+            true,
+            (arguments, context) -> {
+                fastStarted.complete(null);
+                return CompletableFuture.completedFuture(
+                    ToolResult.success("fast-result")
+                );
+            }
+        );
         Agent agent = agentBuilder("parallel", model)
             .tool(slow)
             .tool(fast)
             .parallelToolCalls(true)
             .build();
 
-        AgentResult result = agent.run("run both");
+        CompletableFuture<AgentResult> execution = agent.runAsync("run both");
+        fastStarted.get(2, TimeUnit.SECONDS);
+        assertFalse(execution.isDone());
+        releaseSlow.complete(ToolResult.success("slow-result"));
+        AgentResult result = execution.get(2, TimeUnit.SECONDS);
 
         assertEquals("slow", result.getState().getToolResults().get(0)
             .getCall().getName());
         assertEquals("fast", result.getState().getToolResults().get(1)
             .getCall().getName());
+    }
+
+    @Test
+    void parallelModeUsesExclusiveToolsAsOrderingBarriers() throws Exception {
+        List<ToolCall> calls = Arrays.asList(
+            new ToolCall("read-1", "read", "{\"phase\":\"first\"}"),
+            new ToolCall("read-2", "read", "{\"phase\":\"second\"}"),
+            new ToolCall("write-1", "write", "{}"),
+            new ToolCall("read-3", "read", "{\"phase\":\"trailing\"}")
+        );
+        ScriptedChatModel model = new ScriptedChatModel(
+            ModelResponse.of(ChatMessage.assistant(null, calls)),
+            ModelResponse.of(ChatMessage.assistant("done"))
+        );
+        CompletableFuture<Void> firstReadersStarted =
+            new CompletableFuture<Void>();
+        CompletableFuture<Void> releaseFirstReaders =
+            new CompletableFuture<Void>();
+        CompletableFuture<Void> writerStarted = new CompletableFuture<Void>();
+        CompletableFuture<Void> releaseWriter = new CompletableFuture<Void>();
+        CompletableFuture<Void> trailingReaderStarted =
+            new CompletableFuture<Void>();
+        AtomicInteger firstReaderCount = new AtomicInteger();
+
+        Tool reader = Tools.async(
+            ToolDefinition.builder().name("read").description("Reads data").build(),
+            true,
+            (arguments, context) -> {
+                String phase = arguments.requireString("phase");
+                if ("trailing".equals(phase)) {
+                    trailingReaderStarted.complete(null);
+                    return CompletableFuture.completedFuture(
+                        ToolResult.success(phase)
+                    );
+                }
+                if (firstReaderCount.incrementAndGet() == 2) {
+                    firstReadersStarted.complete(null);
+                }
+                return releaseFirstReaders.thenApply(
+                    ignored -> ToolResult.success(phase)
+                );
+            }
+        );
+        Tool writer = Tools.async(
+            ToolDefinition.builder().name("write").description("Writes data").build(),
+            (arguments, context) -> {
+                writerStarted.complete(null);
+                return releaseWriter.thenApply(
+                    ignored -> ToolResult.success("written")
+                );
+            }
+        );
+        Agent agent = agentBuilder("safe-parallel", model)
+            .tool(reader)
+            .tool(writer)
+            .parallelToolCalls(true)
+            .build();
+
+        CompletableFuture<AgentResult> execution = agent.runAsync("read and write");
+
+        firstReadersStarted.get(2, TimeUnit.SECONDS);
+        assertFalse(writerStarted.isDone());
+        assertFalse(trailingReaderStarted.isDone());
+
+        releaseFirstReaders.complete(null);
+        writerStarted.get(2, TimeUnit.SECONDS);
+        assertFalse(trailingReaderStarted.isDone());
+
+        releaseWriter.complete(null);
+        trailingReaderStarted.get(2, TimeUnit.SECONDS);
+        AgentResult result = execution.get(2, TimeUnit.SECONDS);
+
+        assertEquals(4, result.getState().getToolResults().size());
+        ToolExecutionRecord writerRecord = result.getState()
+            .getToolResults().get(2);
+        ToolExecutionRecord trailingRecord = result.getState()
+            .getToolResults().get(3);
+        assertEquals("write", writerRecord.getCall().getName());
+        assertTrue(writerRecord.getDispatchDurationNanos() > 0L);
+        assertEquals(
+            writerRecord.getTotalDurationNanos(),
+            writerRecord.getDispatchDurationNanos()
+                + writerRecord.getHandlerDurationNanos()
+        );
+        assertTrue(
+            trailingRecord.getDispatchDurationNanos()
+                >= writerRecord.getTotalDurationNanos()
+        );
+        assertEquals(
+            writerRecord.getDispatchedAt(), trailingRecord.getDispatchedAt()
+        );
+    }
+
+    @Test
+    void cancellingParallelBatchCancelsEveryActiveTool() {
+        CompletableFuture<ToolResult> firstOperation =
+            new CompletableFuture<ToolResult>();
+        CompletableFuture<ToolResult> secondOperation =
+            new CompletableFuture<ToolResult>();
+        ScriptedChatModel model = new ScriptedChatModel(
+            ModelResponse.of(ChatMessage.assistant(null, Arrays.asList(
+                new ToolCall("first-call", "first", "{}"),
+                new ToolCall("second-call", "second", "{}")
+            )))
+        );
+        Tool first = Tools.async(
+            ToolDefinition.builder().name("first").description("First").build(),
+            true,
+            (arguments, context) -> firstOperation
+        );
+        Tool second = Tools.async(
+            ToolDefinition.builder().name("second").description("Second").build(),
+            true,
+            (arguments, context) -> secondOperation
+        );
+        Agent agent = agentBuilder("parallel-cancel", model)
+            .tool(first)
+            .tool(second)
+            .parallelToolCalls(true)
+            .build();
+
+        CompletableFuture<AgentResult> execution = agent.runAsync("cancel both");
+
+        assertTrue(execution.cancel(true));
+        assertTrue(firstOperation.isCancelled());
+        assertTrue(secondOperation.isCancelled());
     }
 
     @Test
@@ -178,6 +327,7 @@ class AgentLoopTest {
         Agent child = agentBuilder("research_agent", childModel)
             .instructions("Child instructions")
             .build();
+        assertTrue(child.asTool().supportsParallelToolCalls());
 
         ToolCall delegate = new ToolCall(
             "delegate-1",
@@ -438,24 +588,6 @@ class AgentLoopTest {
 
     private static AgentBuilderAdapter agentBuilder(String name, ChatModel model) {
         return new AgentBuilderAdapter(name, model);
-    }
-
-    private static Tool asyncValueTool(String name, String value, long delayMillis) {
-        return Tools.async(
-            ToolDefinition.builder()
-                .name(name)
-                .description("Returns " + value)
-                .build(),
-            (arguments, context) -> CompletableFuture.supplyAsync(() -> {
-                try {
-                    Thread.sleep(delayMillis);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException(e);
-                }
-                return ToolResult.success(value);
-            }, context.getExecutor())
-        );
     }
 
     private static final class AgentBuilderAdapter {

@@ -42,6 +42,12 @@ public final class AgentTool implements Tool {
     }
 
     @Override
+    public boolean supportsParallelToolCalls() {
+        // 每次委派都会创建独立 State；显式开启批次并行时可安全地并发运行子 Turn。
+        return true;
+    }
+
+    @Override
     public CompletableFuture<ToolResult> execute(ToolArguments arguments,
                                                  ToolContext context) {
         // parent* 字段只用于追踪谱系，不会把父 State 注入子 Agent。

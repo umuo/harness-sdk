@@ -24,6 +24,20 @@ Turn
 
 每个 `AgentSpan` 将 `getInput()` 和 `getOutput()` 与索引属性分开暴露。对于绑定的 HTTP 提供商 (Providers)，模型输入和输出包含实际序列化的请求体和原始响应结构。相应的提供商中立的 `ModelRequest` 和 `ModelResponse` 仍然可以通过 `getSdkInput()` 和 `getSdkOutput()` 获取。没有提供商交换的自定义模型继续将其规范的 SDK 负载直接作为输入和输出暴露。工具节点包含解析后的参数、结果内容、结构化错误、元数据以及输出文件引用。
 
+完成的 Tool 执行记录还会区分三个时间段：调用进入批次调度器到通过并行/独占门控
+的 `dispatch`，拦截器链与 Tool 实际处理的 `handler`，以及二者合计的 `total`。
+`ToolExecutionRecord` 通过 `getDispatchedAt()`、`getStartedAt()` 和
+`getCompletedAt()` 暴露时间点，并通过纳秒 getter 暴露使用单调时钟测量的耗时。
+Tool Span 将相同数值写入以下属性：
+
+- `agent.tool.dispatch.duration_ns`
+- `agent.tool.handler.duration_ns`
+- `agent.tool.total.duration_ns`
+
+Span 的起点是调度时间而不是处理器开始时间，因此独占 Tool 等待前序并行阶段的
+延迟不会从追踪中消失。系统墙上时钟回拨时，对外时间点会保持非递减；耗时仍以
+`System.nanoTime()` 为准。
+
 仅用于可观测性的摘要信息永远不会出现在模型跨度的输入或输出中。例如，消息计数、可用工具计数、返回的工具调用计数以及捕获遗漏计数使用 `agent.model.*` 跨度属性代替。因此，节点检查器将提供商的主体、标准化的 SDK 模型和索引的遥测元数据保持分离。HTTP 标头 (Headers) 刻意从不被复制到交换中，因为授权和供应商 API 密钥标头是敏感信息。
 
 ## 基本用法
@@ -147,6 +161,11 @@ observability.close();
 - 模型提供商报告的输入、输出和总 token 数；
 - 累积的回合、模型和工具持续时间（以纳秒为单位）；
 - 导出器失败次数。
+
+工具累计持续时间使用包含调度等待的 `total`，而单个 Tool Span 属性可以进一步
+区分是执行变慢，还是在安全并行门控前等待。以 `FAIL_FAST` 直接终止回合且未生成
+`ToolExecutionRecord` 的调用仍由打开的 Tool Span 记录总失败区间，但不会生成上述
+三个分段属性。
 
 除了已启动/活跃的回合外，其他值在回合达到终态事件时提交。不报告使用情况的提供商贡献的 token 数为零。指标是无锁快照，而不是直方图或持久的指标存储。
 

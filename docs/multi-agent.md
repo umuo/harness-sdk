@@ -21,6 +21,8 @@ Agent supervisor = Agent.builder()
 
 每次专家调用都会创建一个全新的 AgentState。父节点发送一个
 `task` 参数，并且只接收子节点的结果以及子节点回合（Turn）的元数据。
+`AgentTool` 因此显式声明支持安全并行；监督者配置 `.parallelToolCalls(true)` 后，
+同一模型响应中的多个专家调用可以并发执行，结果仍按模型调用顺序回填。
 
 ## 独立的并行 Agent
 

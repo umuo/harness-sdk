@@ -24,7 +24,8 @@ import java.util.function.Function;
  * 一批模型 Tool Call 的执行器。
  *
  * <p>它统一处理工具查找、JSON 参数解析、拦截器链、超时、取消、错误策略和最终
- * 输出限制。并行模式只改变执行时机，不改变返回记录的顺序。</p>
+ * 输出限制。并行模式只让显式声明并行安全的连续 Tool Call 同时执行；独占 Tool
+ * 会形成顺序屏障，返回记录仍保持模型原始调用顺序。</p>
  */
 public final class ToolExecutor {
 
@@ -86,16 +87,22 @@ public final class ToolExecutor {
                 Collections.<ToolExecutionRecord>emptyList()
             );
         }
+        DispatchClock dispatchClock = DispatchClock.capture();
         if (mode == ToolExecutionMode.PARALLEL) {
-            return executeParallel(calls, contextFactory, invocationFactory);
+            return executeParallel(
+                calls, contextFactory, invocationFactory, dispatchClock
+            );
         }
-        return executeSequential(calls, contextFactory, invocationFactory);
+        return executeSequential(
+            calls, contextFactory, invocationFactory, dispatchClock
+        );
     }
 
     private CompletableFuture<List<ToolExecutionRecord>> executeSequential(
             List<ToolCall> calls,
             Function<ToolCall, ToolContext> contextFactory,
-            Function<ToolCall, ToolInvocation> invocationFactory) {
+            Function<ToolCall, ToolInvocation> invocationFactory,
+            DispatchClock dispatchClock) {
         final CompletableFuture<List<ToolExecutionRecord>> result =
             new CompletableFuture<List<ToolExecutionRecord>>();
         // 顺序模式始终只有一个活动 Tool future，取消批次时只需取消它。
@@ -108,7 +115,8 @@ public final class ToolExecutor {
             0,
             new ArrayList<ToolExecutionRecord>(),
             active,
-            result
+            result,
+            dispatchClock
         );
         result.whenComplete((records, error) -> {
             if (result.isCancelled()) {
@@ -128,7 +136,8 @@ public final class ToolExecutor {
             int index,
             List<ToolExecutionRecord> records,
             AtomicReference<CompletableFuture<ToolExecutionRecord>> active,
-            CompletableFuture<List<ToolExecutionRecord>> result) {
+            CompletableFuture<List<ToolExecutionRecord>> result,
+            DispatchClock dispatchClock) {
         if (result.isDone()) {
             return;
         }
@@ -140,12 +149,20 @@ public final class ToolExecutor {
         }
 
         ToolCall call = calls.get(index);
-        CompletableFuture<ToolExecutionRecord> current =
-            executeOne(
+        final CompletableFuture<ToolExecutionRecord> current;
+        try {
+            current = executeOne(
                 call,
                 contextFactory.apply(call),
-                invocationFactory.apply(call)
+                invocationFactory.apply(call),
+                false,
+                dispatchClock
             );
+        } catch (Throwable error) {
+            // 工厂或自定义注册表在回调线程抛错时也必须结束批次，不能留下悬空 future。
+            result.completeExceptionally(error);
+            return;
+        }
         active.set(current);
         if (result.isCancelled()) {
             current.cancel(true);
@@ -163,7 +180,7 @@ public final class ToolExecutor {
             records.add(record);
             executeSequentialAt(
                 calls, contextFactory, invocationFactory,
-                index + 1, records, active, result
+                index + 1, records, active, result, dispatchClock
             );
         });
     }
@@ -171,17 +188,124 @@ public final class ToolExecutor {
     private CompletableFuture<List<ToolExecutionRecord>> executeParallel(
             List<ToolCall> calls,
             Function<ToolCall, ToolContext> contextFactory,
-            Function<ToolCall, ToolInvocation> invocationFactory) {
-        List<CompletableFuture<ToolExecutionRecord>> futures =
-            new ArrayList<CompletableFuture<ToolExecutionRecord>>();
-        for (ToolCall call : calls) {
-            futures.add(executeOne(
-                call,
-                contextFactory.apply(call),
-                invocationFactory.apply(call)
+            Function<ToolCall, ToolInvocation> invocationFactory,
+            DispatchClock dispatchClock) {
+        final CompletableFuture<List<ToolExecutionRecord>> result =
+            new CompletableFuture<List<ToolExecutionRecord>>();
+        final AtomicReference<CompletableFuture<List<ToolExecutionRecord>>> active =
+            new AtomicReference<CompletableFuture<List<ToolExecutionRecord>>>();
+        executeParallelAt(
+            calls,
+            contextFactory,
+            invocationFactory,
+            0,
+            new ArrayList<ToolExecutionRecord>(),
+            active,
+            result,
+            dispatchClock
+        );
+        result.whenComplete((records, error) -> {
+            if (result.isCancelled()) {
+                CompletableFuture<List<ToolExecutionRecord>> current =
+                    active.getAndSet(null);
+                if (current != null) {
+                    current.cancel(true);
+                }
+            }
+        });
+        return result;
+    }
+
+    private void executeParallelAt(
+            List<ToolCall> calls,
+            Function<ToolCall, ToolContext> contextFactory,
+            Function<ToolCall, ToolInvocation> invocationFactory,
+            int index,
+            List<ToolExecutionRecord> records,
+            AtomicReference<CompletableFuture<List<ToolExecutionRecord>>> active,
+            CompletableFuture<List<ToolExecutionRecord>> result,
+            DispatchClock dispatchClock) {
+        if (result.isDone()) {
+            return;
+        }
+        if (index >= calls.size()) {
+            result.complete(Collections.unmodifiableList(
+                new ArrayList<ToolExecutionRecord>(records)
             ));
+            return;
         }
 
+        final boolean parallelAdmission;
+        final int end;
+        try {
+            parallelAdmission = supportsParallelToolCalls(calls.get(index));
+            int candidate = index + 1;
+            if (parallelAdmission) {
+                // 连续只读/并行安全调用组成共享阶段；独占调用是阶段之间的屏障。
+                while (candidate < calls.size()
+                        && supportsParallelToolCalls(calls.get(candidate))) {
+                    candidate++;
+                }
+            }
+            end = candidate;
+        } catch (Throwable error) {
+            result.completeExceptionally(error);
+            return;
+        }
+
+        List<CompletableFuture<ToolExecutionRecord>> executions =
+            new ArrayList<CompletableFuture<ToolExecutionRecord>>(end - index);
+        try {
+            for (int current = index; current < end; current++) {
+                ToolCall call = calls.get(current);
+                executions.add(executeOne(
+                    call,
+                    contextFactory.apply(call),
+                    invocationFactory.apply(call),
+                    parallelAdmission,
+                    dispatchClock
+                ));
+            }
+        } catch (Throwable error) {
+            // 已启动的同阶段调用必须一并取消，避免批次失败后仍在后台产生副作用。
+            for (CompletableFuture<ToolExecutionRecord> execution : executions) {
+                execution.cancel(true);
+            }
+            result.completeExceptionally(error);
+            return;
+        }
+        CompletableFuture<List<ToolExecutionRecord>> segment =
+            collectInCallOrder(executions);
+        active.set(segment);
+        if (result.isCancelled()) {
+            segment.cancel(true);
+            return;
+        }
+        segment.whenComplete((segmentRecords, error) -> {
+            active.compareAndSet(segment, null);
+            if (result.isDone()) {
+                return;
+            }
+            if (error != null) {
+                result.completeExceptionally(Futures.unwrap(error));
+                return;
+            }
+            records.addAll(segmentRecords);
+            executeParallelAt(
+                calls,
+                contextFactory,
+                invocationFactory,
+                end,
+                records,
+                active,
+                result,
+                dispatchClock
+            );
+        });
+    }
+
+    private CompletableFuture<List<ToolExecutionRecord>> collectInCallOrder(
+            List<CompletableFuture<ToolExecutionRecord>> futures) {
         final CompletableFuture<List<ToolExecutionRecord>> result =
             new CompletableFuture<List<ToolExecutionRecord>>();
         final AtomicInteger remaining = new AtomicInteger(futures.size());
@@ -218,22 +342,39 @@ public final class ToolExecutor {
         return result;
     }
 
+    private boolean supportsParallelToolCalls(ToolCall call) {
+        Optional<Tool> tool = registry.find(call.getName());
+        return tool.isPresent() && tool.get().supportsParallelToolCalls();
+    }
+
     private CompletableFuture<ToolExecutionRecord> executeOne(
             ToolCall call,
             ToolContext context,
-            ToolInvocation invocation) {
-        Instant startedAt = Instant.now();
+            ToolInvocation invocation,
+            boolean parallelAdmission,
+            DispatchClock dispatchClock) {
+        ExecutionClock executionClock = dispatchClock.startExecution();
         if (!interceptors.isEmpty() && invocation == null) {
-            return failureOrException(call, startedAt, new IllegalStateException(
-                "ToolInvocation is required when interceptors are configured"
-            ));
+            return failureOrException(
+                call,
+                executionClock,
+                new IllegalStateException(
+                    "ToolInvocation is required when interceptors are configured"
+                )
+            );
         }
         CancellationGroup cancellations = new CancellationGroup();
         // 拦截器可以改写 ToolCall；记录同时保留模型原始调用和实际执行调用。
         AtomicReference<ToolCall> executedCall =
             new AtomicReference<ToolCall>(call);
         final CompletableFuture<ToolResult> execution = proceedTool(
-            invocation, call, context, 0, cancellations, executedCall
+            invocation,
+            call,
+            context,
+            0,
+            cancellations,
+            executedCall,
+            parallelAdmission
         );
         cancellations.add(() -> execution.cancel(true));
         CompletableFuture<ToolResult> timed = withTimeout(execution, call, context);
@@ -247,12 +388,15 @@ public final class ToolExecutor {
                         executedCall.get(),
                         // 结果进入 State 和模型上下文之前必须先执行最终边界策略。
                         applyResultPolicy(toolResult),
-                        startedAt,
-                        Instant.now()
+                        executionClock.finish()
                     ));
                 } catch (Throwable policyError) {
                     completeFailure(
-                        result, call, executedCall.get(), startedAt, policyError
+                        result,
+                        call,
+                        executedCall.get(),
+                        executionClock,
+                        policyError
                     );
                 }
                 return;
@@ -261,7 +405,9 @@ public final class ToolExecutor {
                 ? new IllegalStateException("Tool returned null result")
                 : Futures.unwrap(error);
             cancellations.cancel();
-            completeFailure(result, call, executedCall.get(), startedAt, actual);
+            completeFailure(
+                result, call, executedCall.get(), executionClock, actual
+            );
         });
         result.whenComplete((record, error) -> {
             if (result.isCancelled()) {
@@ -278,7 +424,8 @@ public final class ToolExecutor {
             ToolContext context,
             int index,
             CancellationGroup cancellations,
-            AtomicReference<ToolCall> executedCall) {
+            AtomicReference<ToolCall> executedCall,
+            boolean parallelAdmission) {
         if (!interceptors.isEmpty()) {
             Objects.requireNonNull(invocation, "invocation");
         }
@@ -286,7 +433,9 @@ public final class ToolExecutor {
             ToolCall effective = invocation == null
                 ? originalCall : invocation.getCall();
             executedCall.set(effective);
-            return executeTerminal(effective, context, cancellations);
+            return executeTerminal(
+                effective, context, cancellations, parallelAdmission
+            );
         }
         // 与模型拦截器一致，工具拦截器也按注册顺序组成责任链。
         ToolInterceptor interceptor = interceptors.get(index);
@@ -295,7 +444,7 @@ public final class ToolExecutor {
                 invocation,
                 next -> proceedTool(
                     next, originalCall, context, index + 1,
-                    cancellations, executedCall
+                    cancellations, executedCall, parallelAdmission
                 )
             );
             if (result == null) {
@@ -314,7 +463,8 @@ public final class ToolExecutor {
     private CompletableFuture<ToolResult> executeTerminal(
             ToolCall call,
             ToolContext context,
-            CancellationGroup cancellations) {
+            CancellationGroup cancellations,
+            boolean parallelAdmission) {
         // 直到拦截器全部放行后才查注册表，使拦截器可以安全地重写工具名。
         Optional<Tool> resolved = registry.find(call.getName());
         if (!resolved.isPresent()) {
@@ -324,6 +474,22 @@ public final class ToolExecutor {
                 ).retryable(true)
                     .recoveryHint(
                         "Use a tool name from the definitions supplied by the Agent."
+                    )
+                    .detail("tool", call.getName())
+                    .build()
+            ));
+        }
+        if (parallelAdmission
+                && !resolved.get().supportsParallelToolCalls()) {
+            // 拦截器可改写 Tool 名称；二次校验防止共享阶段执行有副作用的 Tool。
+            return Futures.failed(new ToolFailureException(
+                ToolErrorInfo.builder(
+                    "TOOL_PARALLEL_POLICY_CHANGED",
+                    "Tool interceptor rewrote a parallel-safe call to exclusive tool: "
+                        + call.getName()
+                ).retryable(false)
+                    .recoveryHint(
+                        "Keep the rewritten tool parallel-safe or disable parallel tool calls."
                     )
                     .detail("tool", call.getName())
                     .build()
@@ -352,25 +518,25 @@ public final class ToolExecutor {
 
     private CompletableFuture<ToolExecutionRecord> failureOrException(
             ToolCall call,
-            Instant startedAt,
+            ExecutionClock executionClock,
             Throwable error) {
         CompletableFuture<ToolExecutionRecord> result =
             new CompletableFuture<ToolExecutionRecord>();
-        completeFailure(result, call, startedAt, error);
+        completeFailure(result, call, executionClock, error);
         return result;
     }
 
     private void completeFailure(CompletableFuture<ToolExecutionRecord> target,
                                  ToolCall call,
-                                 Instant startedAt,
+                                 ExecutionClock executionClock,
                                  Throwable error) {
-        completeFailure(target, call, call, startedAt, error);
+        completeFailure(target, call, call, executionClock, error);
     }
 
     private void completeFailure(CompletableFuture<ToolExecutionRecord> target,
                                  ToolCall call,
                                  ToolCall executedCall,
-                                 Instant startedAt,
+                                 ExecutionClock executionClock,
                                  Throwable error) {
         if (errorPolicy == ToolErrorPolicy.FAIL_FAST) {
             // FAIL_FAST 直接终止整个 Turn；REPORT_TO_MODEL 则生成错误 Tool 消息。
@@ -385,8 +551,7 @@ public final class ToolExecutor {
                 call,
                 executedCall,
                 applyResultPolicy(failure),
-                startedAt,
-                Instant.now()
+                executionClock.finish()
             ));
         } catch (Throwable policyError) {
             target.completeExceptionally(policyError);
@@ -435,6 +600,65 @@ public final class ToolExecutor {
             }
         });
         return target;
+    }
+
+    /** 捕获整个模型 Tool 批次进入调度器时的墙上时间和单调时间。 */
+    private static final class DispatchClock {
+        private final Instant dispatchedAt;
+        private final long dispatchedNanos;
+
+        private DispatchClock(Instant dispatchedAt, long dispatchedNanos) {
+            this.dispatchedAt = dispatchedAt;
+            this.dispatchedNanos = dispatchedNanos;
+        }
+
+        private static DispatchClock capture() {
+            long nanos = System.nanoTime();
+            return new DispatchClock(Instant.now(), nanos);
+        }
+
+        private ExecutionClock startExecution() {
+            long nanos = System.nanoTime();
+            Instant observed = Instant.now();
+            // 墙上时钟可能回拨；对外时间点保持有序，真实耗时仍来自单调时钟。
+            Instant startedAt = observed.isBefore(dispatchedAt)
+                ? dispatchedAt : observed;
+            return new ExecutionClock(this, startedAt, nanos);
+        }
+    }
+
+    /** 为一个实际开始执行的 Tool Call 完成分阶段单调计时。 */
+    private static final class ExecutionClock {
+        private final DispatchClock dispatchClock;
+        private final Instant startedAt;
+        private final long startedNanos;
+
+        private ExecutionClock(DispatchClock dispatchClock,
+                               Instant startedAt,
+                               long startedNanos) {
+            this.dispatchClock = dispatchClock;
+            this.startedAt = startedAt;
+            this.startedNanos = startedNanos;
+        }
+
+        private ToolExecutionTiming finish() {
+            long completedNanos = System.nanoTime();
+            Instant observed = Instant.now();
+            Instant completedAt = observed.isBefore(startedAt)
+                ? startedAt : observed;
+            return ToolExecutionTiming.measured(
+                dispatchClock.dispatchedAt,
+                startedAt,
+                completedAt,
+                elapsedNanos(dispatchClock.dispatchedNanos, startedNanos),
+                elapsedNanos(startedNanos, completedNanos),
+                elapsedNanos(dispatchClock.dispatchedNanos, completedNanos)
+            );
+        }
+
+        private static long elapsedNanos(long start, long end) {
+            return Math.max(0L, end - start);
+        }
     }
 
     /** 汇总拦截器和实际 Tool future 的取消动作，处理取消注册之间的竞态。 */

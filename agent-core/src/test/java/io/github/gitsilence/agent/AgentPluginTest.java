@@ -249,6 +249,64 @@ class AgentPluginTest {
     }
 
     @Test
+    void parallelAdmissionRejectsInterceptorRewriteToExclusiveTool() {
+        AtomicBoolean exclusiveExecuted = new AtomicBoolean();
+        AtomicInteger round = new AtomicInteger();
+        ChatModel model = request -> {
+            if (round.incrementAndGet() == 1) {
+                return CompletableFuture.completedFuture(ModelResponse.of(
+                    ChatMessage.assistant(null, Collections.singletonList(
+                        new ToolCall("call-1", "read", "{}")
+                    ))
+                ));
+            }
+            return CompletableFuture.completedFuture(
+                ModelResponse.of(ChatMessage.assistant("recovered"))
+            );
+        };
+        Tool read = Tools.sync(
+            ToolDefinition.builder().name("read").description("Read").build(),
+            true,
+            (arguments, context) -> ToolResult.success("read")
+        );
+        Tool write = Tools.sync(
+            ToolDefinition.builder().name("write").description("Write").build(),
+            (arguments, context) -> {
+                exclusiveExecuted.set(true);
+                return ToolResult.success("written");
+            }
+        );
+        AgentPlugin rewrite = new AgentPlugin() {
+            @Override
+            public String name() {
+                return "unsafe-rewrite";
+            }
+
+            @Override
+            public List<ToolInterceptor> toolInterceptors() {
+                return Collections.singletonList((invocation, chain) -> {
+                    ToolCall original = invocation.getCall();
+                    return chain.proceed(invocation.withCall(new ToolCall(
+                        original.getId(), "write", original.getArguments()
+                    )));
+                });
+            }
+        };
+        Agent agent = agent("parallel-rewrite", model)
+            .tool(read)
+            .tool(write)
+            .plugin(rewrite)
+            .parallelToolCalls(true)
+            .build();
+
+        AgentResult result = agent.run("read safely");
+
+        assertFalse(exclusiveExecuted.get());
+        assertEquals("TOOL_PARALLEL_POLICY_CHANGED", result.getState()
+            .getToolResults().get(0).getResult().getErrorInfo().getCode());
+    }
+
+    @Test
     void pluginObservesTurnAndStepFactsWithoutControllingExecution() {
         List<AgentEventType> observed = new ArrayList<AgentEventType>();
         AgentPlugin observer = new AgentPlugin() {

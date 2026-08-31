@@ -55,6 +55,12 @@ class WorkspaceToolsTest {
         assertTrue(patchSchema.contains("\"patch\""));
         assertTrue(patchSchema.contains("\"required\":[\"patch\"]"));
         assertTrue(tools.getTools().contains(tools.getApplyPatch()));
+        assertTrue(tools.getReadFile().supportsParallelToolCalls());
+        assertTrue(tools.getGlob().supportsParallelToolCalls());
+        assertFalse(tools.getWriteFile().supportsParallelToolCalls());
+        assertFalse(tools.getEdit().supportsParallelToolCalls());
+        assertFalse(tools.getApplyPatch().supportsParallelToolCalls());
+        assertFalse(tools.getBash().get().supportsParallelToolCalls());
     }
 
     @Test

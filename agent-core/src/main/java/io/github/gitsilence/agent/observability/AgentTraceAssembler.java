@@ -20,7 +20,6 @@ import io.github.gitsilence.agent.tool.ToolOutputReference;
 import io.github.gitsilence.agent.tool.ToolResult;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -298,6 +297,18 @@ final class AgentTraceAssembler {
             "agent.tool.output_reference_count",
             result.getOutputReferences().size()
         );
+        span.attributes.put(
+            "agent.tool.dispatch.duration_ns",
+            record.getDispatchDurationNanos()
+        );
+        span.attributes.put(
+            "agent.tool.handler.duration_ns",
+            record.getHandlerDurationNanos()
+        );
+        span.attributes.put(
+            "agent.tool.total.duration_ns",
+            record.getTotalDurationNanos()
+        );
         span.output.put("error", result.isError());
         span.output.put("characters", result.getContent().length());
         span.output.put("outputReferenceCount", result.getOutputReferences().size());
@@ -330,16 +341,18 @@ final class AgentTraceAssembler {
                     ? limit(result.getContent())
                     : "Tool returned an error";
             span.finishObserved(
-                record.getStartedAt(),
+                record.getDispatchedAt(),
                 record.getCompletedAt(),
+                record.getTotalDurationNanos(),
                 AgentSpanStatus.ERROR,
                 errorType,
                 errorMessage
             );
         } else {
             span.finishObserved(
-                record.getStartedAt(),
+                record.getDispatchedAt(),
                 record.getCompletedAt(),
+                record.getTotalDurationNanos(),
                 AgentSpanStatus.OK,
                 "",
                 ""
@@ -790,6 +803,7 @@ final class AgentTraceAssembler {
 
         private void finishObserved(Instant observedStartedAt,
                                     Instant observedEndedAt,
+                                    long observedDurationNanos,
                                     AgentSpanStatus status,
                                     String errorType,
                                     String errorMessage) {
@@ -797,9 +811,7 @@ final class AgentTraceAssembler {
             this.finished = true;
             this.startedAt = observedStartedAt;
             this.endedAt = observedEndedAt;
-            this.durationNanos = durationNanos(
-                observedStartedAt, observedEndedAt
-            );
+            this.durationNanos = Math.max(0L, observedDurationNanos);
             this.status = status;
             this.errorType = errorType == null ? "" : errorType;
             this.errorMessage = errorMessage == null ? "" : errorMessage;
@@ -826,15 +838,6 @@ final class AgentTraceAssembler {
             );
         }
 
-        private static long durationNanos(Instant startedAt, Instant endedAt) {
-            try {
-                return Math.max(
-                    0L, Duration.between(startedAt, endedAt).toNanos()
-                );
-            } catch (ArithmeticException ignored) {
-                return 0L;
-            }
-        }
     }
 
     private static ExecutionStatus status(AgentEventType type) {

@@ -20,6 +20,7 @@ import io.github.gitsilence.agent.runtime.AgentExecutionException;
 import io.github.gitsilence.agent.runtime.ExecutionStatus;
 import io.github.gitsilence.agent.tool.Tool;
 import io.github.gitsilence.agent.tool.ToolDefinition;
+import io.github.gitsilence.agent.tool.ToolExecutionRecord;
 import io.github.gitsilence.agent.tool.ToolResult;
 import io.github.gitsilence.agent.tool.Tools;
 import org.junit.jupiter.api.Test;
@@ -101,10 +102,27 @@ class AgentObservabilityTest {
         AgentSpan firstStep = only(trace, AgentSpanKind.STEP, 0);
         AgentSpan firstModel = only(trace, AgentSpanKind.MODEL, 0);
         AgentSpan tool = only(trace, AgentSpanKind.TOOL, 0);
+        ToolExecutionRecord toolExecution = result.getState()
+            .getToolResults().get(0);
         assertEquals(turn.getSpanId(), firstStep.getParentSpanId());
         assertEquals(firstStep.getSpanId(), firstModel.getParentSpanId());
         assertEquals(firstStep.getSpanId(), tool.getParentSpanId());
         assertEquals(AgentSpanStatus.OK, tool.getStatus());
+        assertEquals(toolExecution.getDispatchedAt(), tool.getStartedAt());
+        assertEquals(toolExecution.getCompletedAt(), tool.getEndedAt());
+        assertEquals(toolExecution.getTotalDurationNanos(), tool.getDurationNanos());
+        assertEquals(
+            Long.valueOf(toolExecution.getDispatchDurationNanos()),
+            tool.getAttributes().get("agent.tool.dispatch.duration_ns")
+        );
+        assertEquals(
+            Long.valueOf(toolExecution.getHandlerDurationNanos()),
+            tool.getAttributes().get("agent.tool.handler.duration_ns")
+        );
+        assertEquals(
+            Long.valueOf(toolExecution.getTotalDurationNanos()),
+            tool.getAttributes().get("agent.tool.total.duration_ns")
+        );
         assertFalse(tool.getInput().containsKey("arguments"));
         assertFalse(tool.getOutput().containsKey("content"));
         assertFalse(firstModel.getInput().containsKey("messages"));

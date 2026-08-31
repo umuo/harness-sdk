@@ -6,7 +6,6 @@ import io.github.gitsilence.agent.agent.AgentInvocation;
 import io.github.gitsilence.agent.agent.AgentResult;
 import io.github.gitsilence.agent.model.ChatMessage;
 import io.github.gitsilence.agent.model.ChatModel;
-import io.github.gitsilence.agent.model.ModelRequest;
 import io.github.gitsilence.agent.model.ModelResponse;
 import org.junit.jupiter.api.Test;
 
@@ -14,6 +13,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -22,14 +22,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentExecutionsTest {
 
     @Test
-    void parallelAgentResultsKeepInvocationOrder() {
-        Agent slow = agent("slow", delayedModel("slow-result", 60L));
-        Agent fast = agent("fast", delayedModel("fast-result", 5L));
+    void parallelAgentResultsKeepInvocationOrder() throws Exception {
+        CompletableFuture<ModelResponse> releaseSlow =
+            new CompletableFuture<ModelResponse>();
+        CompletableFuture<Void> fastStarted = new CompletableFuture<Void>();
+        Agent slow = agent("slow", request -> releaseSlow);
+        Agent fast = agent("fast", request -> {
+            fastStarted.complete(null);
+            return CompletableFuture.completedFuture(
+                ModelResponse.of(ChatMessage.assistant("fast-result"))
+            );
+        });
 
-        List<AgentResult> results = AgentExecutions.runParallel(Arrays.asList(
+        CompletableFuture<List<AgentResult>> execution =
+            AgentExecutions.runParallel(Arrays.asList(
             AgentInvocation.of(slow, "first"),
             AgentInvocation.of(fast, "second")
-        )).join();
+        ));
+        fastStarted.get(2, TimeUnit.SECONDS);
+        releaseSlow.complete(
+            ModelResponse.of(ChatMessage.assistant("slow-result"))
+        );
+        List<AgentResult> results = execution.get(2, TimeUnit.SECONDS);
 
         assertEquals("slow-result", results.get(0).getOutput());
         assertEquals("fast-result", results.get(1).getOutput());
@@ -66,20 +80,4 @@ class AgentExecutionsTest {
             .build();
     }
 
-    private static ChatModel delayedModel(String output, long delayMillis) {
-        return new ChatModel() {
-            @Override
-            public CompletableFuture<ModelResponse> generate(ModelRequest request) {
-                return CompletableFuture.supplyAsync(() -> {
-                    try {
-                        Thread.sleep(delayMillis);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException(e);
-                    }
-                    return ModelResponse.of(ChatMessage.assistant(output));
-                });
-            }
-        };
-    }
 }

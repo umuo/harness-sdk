@@ -16,4 +16,7 @@ public @interface Tool {
     String value() default "";
 
     String description() default "";
+
+    /** 仅当方法及其返回的异步操作都可安全并发时设为 {@code true}。 */
+    boolean parallel() default false;
 }

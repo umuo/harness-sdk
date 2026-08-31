@@ -159,8 +159,16 @@ Agent agent = Agent.builder()
 CompletableFuture<AgentResult> future = agent.runAsync(request);
 ```
 
-仅当注册的工具可以安全并发运行时，才配置 `.parallelToolCalls(true)`。
-即使在并行模式下，结果也会按照模型原始调用工具的顺序追加到消息中。
+`.parallelToolCalls(true)` 会启用安全并行调度，但 Tool 默认仍是独占的。只有通过
+`supportsParallelToolCalls()`、强类型基类的并行构造参数、`Tools.sync/async` 的
+并行重载，或 `@Tool(parallel = true)` 显式声明并行安全的 Tool 才会同时执行。
+独占 Tool 会等待前面的并行组完成，并阻止后续调用提前开始。即使在并行模式下，
+结果也会按照模型原始调用工具的顺序追加到消息中。
+
+每个 `ToolExecutionRecord` 会保留调度、实际开始和完成时间。可以通过
+`getDispatchDurationNanos()` 判断调用是否主要在等待前序独占/并行阶段，通过
+`getHandlerDurationNanos()` 查看拦截器与 Tool 的实际处理耗时，二者共同构成
+`getTotalDurationNanos()`。
 
 每个结果在进入状态 (State) 或模型历史记录之前，都会经过最终的 `ToolResultPolicy` 处理。
 默认的 `BoundedToolResultPolicy` 将输出限制为 50 KiB 和 2,000 行，并提供头部/尾部预览。
